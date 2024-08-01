@@ -59,3 +59,5 @@ Temporary Items
 *.xls
 data/*
 results/*
+biapy2DUnet/*
+*.ai
