@@ -116,11 +116,6 @@ for nImg = 1:size(pathMasks,1)
         stdAreaVoronoiCellsPerZone = zeros(1,length(areaZonesMicrometers))';
 
         path2saveVoronoiImage = fullfile('..','results','voronoiImages');
-        if sum(size(maskZones))~=sum(size(finalNucleiLabel))
-           maskZones = imresize(maskZones,size(finalNucleiLabel),"nearest"); 
-           disp(["Warning - mask with different size: " pathMasks(nImg).name]);
-        end
-
         if ~exist(path2saveVoronoiImage,'dir'), mkdir(path2saveVoronoiImage); end
         
         if exist(fullfile(path2saveVoronoiImage, pathMasks(nImg).name),'file')
@@ -129,7 +124,10 @@ for nImg = 1:size(pathMasks,1)
             for nZone =  1:length(areaZonesMicrometers)
                 if (nZone ~= boneZone) && areaZonesMicrometers(nZone)>0
                     muscleBinaryZone = maskZones==nZone;
-                    
+                    if sum(size(muscleBinaryZone))~=sum(size(finalNucleiLabel))
+                       muscleBinaryZone = imresize(muscleBinaryZone,size(finalNucleiLabel),"nearest"); 
+                       disp(["Warning - mask with different size: " pathMasks(nImg).name]);
+                    end
                     auxImg = VoronoizateCells(muscleBinaryZone,finalNucleiLabel.*muscleBinaryZone);    
                     maskTotalVoronoi(auxImg>0)=auxImg(auxImg>0);
                 end
