@@ -1,5 +1,4 @@
 run("Bio-Formats Macro Extensions");
-
 // Paso 1: Obtener archivo .lif manualmente (compatibilidad completa)
 dir = getDirectory("Selecciona el directorio del archivo .lif");
 name = getString("Nombre exacto del archivo (.lif):", "archivo.lif");

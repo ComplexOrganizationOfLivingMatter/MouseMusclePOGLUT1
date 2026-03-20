@@ -5,8 +5,7 @@ addpath(genpath('lib'))
 
 pathProjectionsImages = dir(fullfile('..','data','rawImages','tifs','**','*.tif'));
 pathMasks = dir(fullfile('..','data','annotatedMuscleMasks','**','*.tif'));
-pathPredictions = dir(fullfile('..','data','predictions','all predictions','**','*.tif'));
-
+pathPredictions = dir(fullfile('..','data','predictions','all_predictions_18032026_modelv2','input20260318_154449','results','input20260318_154449_1','per_image','**','*.tif'));
 boneZone = 6;
 
 %11L is labelled as 111. Regions with a label larger than maxMuscleZone
@@ -19,40 +18,50 @@ propertiesNames = {'whole muscle area (um2)', 'whole muscle nuclei/um2','area g1
 numPropertiesPerImage = length(propertiesNames);
 imagesNames ={pathMasks(:).name};
 T_GeneralResults = array2table(zeros(size(pathMasks,1), numPropertiesPerImage),'VariableNames',propertiesNames,'RowNames',imagesNames);
-
+listRes=[];
 for nImg = 1:size(pathMasks,1)
     
     idProj = find(strcmp({pathProjectionsImages(:).name},pathMasks(nImg).name));
+    if length(idProj)>1
+        idProj = idProj(end);
+    end
     infoImg = imfinfo(fullfile(pathProjectionsImages(idProj).folder,pathProjectionsImages(idProj).name));
     imgProjection = imread(fullfile(pathProjectionsImages(idProj).folder,pathProjectionsImages(idProj).name));
+    
+    maskZones = uint8(imread(fullfile(pathMasks(nImg).folder,pathMasks(nImg).name)));
+    maskZones= imresize(maskZones,[size(imgProjection,1),size(imgProjection,2)],'nearest');
+
+
     %select mask delimiting the muscle zones to analyse
       %%%% load(fullfile(pathMasks(nImg).folder,[imageName '.mat']),'labels');
       %%%% maskZones = relabelCategoriesToImg(labels);
-    
+
     idPred = find(strcmp({pathPredictions(:).name},pathMasks(nImg).name));
     imgPrediction = imread(fullfile(pathPredictions(idPred).folder,pathPredictions(idPred).name));
-    
-    %binarize with autothreshold
-    BW = imbinarize(imgPrediction);
-    
+
+    % %binarize with autothreshold
+    % % BW = imbinarize(imgPrediction);
+
+    %Convert to uint8 and get only those propbabilities close to 255
+    %[250-255]. It reduces the false positives
+    BW = uint8(imgPrediction*255)>=250;
+
     %make compact the detected objects   
     BW_dilated = imdilate(BW,strel('disk',1));
     BW_erode = imerode(BW_dilated,strel('disk',1)); 
-    finalNuclei = BW_erode;
-    
-    taggedNuclei = bwlabel(BW_erode,4);
-    areaNuclei = regionprops(taggedNuclei,'Area');  
+    taggedNuclei = BW_erode;
 
-    %limit a minimum threshold size of 5um^2. If area>50um2 then, try
+    %limit a minimum threshold size of 10um^2. If area>50um2 then, try
     %watershed.
-    minNucleiArea = 5;
-    maxNucleiArea = 70;
+    %%XResolution -> 1 pixel = 0.5055443 um
+    minArea_um2 = 10;
+    micron_per_pixel = 1 / infoImg.XResolution;
+    minArea_pixels = minArea_um2 / (micron_per_pixel^2);
+    % maxNucleiArea = 70;
 
     %%CAST RESOLUTION TO um. 
-    %unitsratio("microns","inches");
 
-    areaMicrometers = vertcat(areaNuclei.Area)/(infoImg.XResolution*infoImg.YResolution);
-    
+    % unitsratio("microns","inches");
     % %Watershed large nuclei to try to separate them
     % labels2Watershed = find(areaMicrometers >= maxNucleiArea);
     % maskWS = ismember(taggedNuclei,labels2Watershed);
@@ -60,20 +69,22 @@ for nImg = 1:size(pathMasks,1)
     % L = watershed(-D);
     % L(~maskWS)=0;
 
-    labels2del = find(areaMicrometers < minNucleiArea/(infoImg.XResolution*infoImg.YResolution));
-    
-    finalNuclei(ismember(taggedNuclei,labels2del))=0;
-    
-    
-    clearvars BW BW_dilated BW_erode taggedNuclei imgPrediction
-    
-    path2saveBinaryImage = fullfile('..','results','binaryNucleiStemCells');
+    finalNuclei = bwareaopen(taggedNuclei, ceil(minArea_pixels));
+
+
+    % clearvars BW BW_dilated BW_erode taggedNuclei imgPrediction
+
+    path2saveBinaryImage = fullfile('..','results','modelV2','binaryNucleiStemCells_filtered');
     if ~exist(path2saveBinaryImage,'dir'), mkdir(path2saveBinaryImage); end
+
+    binaryMuscleGroups = zeros(size(maskZones));
+    binaryMuscleGroups(maskZones>0 & maskZones~=6)=1;
+    finalNuclei(binaryMuscleGroups==0)=0;
 
     if ~exist(fullfile(path2saveBinaryImage,pathMasks(nImg).name),'file')
         imwrite(uint8(finalNuclei)*255,fullfile(path2saveBinaryImage,pathMasks(nImg).name))
     end
-    
+
     propsNuclei = regionprops(finalNuclei,'Centroid','Area');
     centroidsNuclei = round(vertcat(propsNuclei.Centroid));
 
@@ -86,81 +97,76 @@ for nImg = 1:size(pathMasks,1)
     nucleiByArea = arrayfun(@(x) ceil(x/(maxNucleiArea/(infoImg.XResolution*infoImg.YResolution))), areaMicrometersFinal);
     totalNucleiByArea = sum(nucleiByArea);
 
+    maskZones(maskZones>maxMuscleZone) = maxMuscleZone+1;
+    %%calculate area per muscle zone
+    areaZones= regionprops(maskZones,'Area');
+    areaZonesMicrometers=zeros(1,maxMuscleZone+1);
+    areaZonesMicrometers(1:length(areaZones))=vertcat(areaZones.Area)/(infoImg.XResolution*infoImg.YResolution);
 
-    if exist(fullfile(pathMasks(nImg).folder,pathMasks(nImg).name),'file') 
-        maskZones = uint8(imread(fullfile(pathMasks(nImg).folder,pathMasks(nImg).name)));
-        
-        maskZones(maskZones>maxMuscleZone) = maxMuscleZone+1;
-        %%calculate area per muscle zone
-        areaZones= regionprops(maskZones,'Area');
-        areaZonesMicrometers=zeros(1,maxMuscleZone+1);
-        areaZonesMicrometers(1:length(areaZones))=vertcat(areaZones.Area)/(infoImg.XResolution*infoImg.YResolution);
-        
-        %count number of nuclei per zone
-        nLabels = maskZones(sub2ind(size(maskZones),centroidsNuclei(:,2),centroidsNuclei(:,1)));
-        nNucleiPerZone = arrayfun(@(x) sum(ismember(nLabels,x)),[1:length(areaZonesMicrometers)]);
-        nNucleiPerZoneByNucleiArea = arrayfun(@(x) sum(ismember(nLabels,x).*nucleiByArea),[1:length(areaZonesMicrometers)]);
+    %% Count number of nuclei per zone
+    nLabels = maskZones(sub2ind(size(maskZones),centroidsNuclei(:,2),centroidsNuclei(:,1)));
+    nNucleiPerZone = arrayfun(@(x) sum(ismember(nLabels,x)),[1:length(areaZonesMicrometers)]);
+    nNucleiPerZoneByNucleiArea = arrayfun(@(x) sum(ismember(nLabels,x).*nucleiByArea),[1:length(areaZonesMicrometers)]);
 
-        nucleiDensityPerMuscleGroup = nNucleiPerZoneByNucleiArea./areaZonesMicrometers;
+    nucleiDensityPerMuscleGroup = nNucleiPerZoneByNucleiArea./areaZonesMicrometers;
 
-        for nGroups=[1:5,7:maxMuscleZone+1]
-            T_GeneralResults.(['area g' num2str(nGroups) ' (um2)'])(nImg) = areaZonesMicrometers(nGroups);
-            T_GeneralResults.(['nuclei/um2 g' num2str(nGroups)])(nImg) = nucleiDensityPerMuscleGroup(nGroups);
-        end
+    for nGroups=[1:5,7:maxMuscleZone+1]
+        T_GeneralResults.(['area g' num2str(nGroups) ' (um2)'])(nImg) = areaZonesMicrometers(nGroups);
+        T_GeneralResults.(['nuclei/um2 g' num2str(nGroups)])(nImg) = nucleiDensityPerMuscleGroup(nGroups);
+    end
 
-        %generate voronoi diagram
-        finalNucleiLabel = bwlabel(finalNuclei);
-        maskTotalVoronoi = zeros(size(finalNuclei));
-        maxAreaVoronoiCellsPerZone = zeros(1,length(areaZonesMicrometers))';
-        minAreaVoronoiCellsPerZone = zeros(1,length(areaZonesMicrometers))';
-        stdAreaVoronoiCellsPerZone = zeros(1,length(areaZonesMicrometers))';
+    %generate voronoi diagram
+    finalNucleiLabel = bwlabel(finalNuclei);
+    maskTotalVoronoi = zeros(size(finalNuclei));
+    maxAreaVoronoiCellsPerZone = zeros(1,length(areaZonesMicrometers))';
+    minAreaVoronoiCellsPerZone = zeros(1,length(areaZonesMicrometers))';
+    stdAreaVoronoiCellsPerZone = zeros(1,length(areaZonesMicrometers))';
 
-        path2saveVoronoiImage = fullfile('..','results','voronoiImages');
-        if sum(size(maskZones))~=sum(size(finalNucleiLabel))
-           maskZones = imresize(maskZones,size(finalNucleiLabel),"nearest"); 
-           disp(["Warning - mask with different size: " pathMasks(nImg).name]);
-        end
+    path2saveVoronoiImage = fullfile('..','results','voronoiImages');
+    if sum(size(maskZones))~=sum(size(finalNucleiLabel))
+       maskZones = imresize(maskZones,size(finalNucleiLabel),"nearest"); 
+       disp(["Warning - mask with different size: " pathMasks(nImg).name]);
+    end
 
-        if ~exist(path2saveVoronoiImage,'dir'), mkdir(path2saveVoronoiImage); end
-        
-        if exist(fullfile(path2saveVoronoiImage, pathMasks(nImg).name),'file')
-            maskTotalVoronoi=imread(fullfile(path2saveVoronoiImage, pathMasks(nImg).name));
-        else 
-            for nZone =  1:length(areaZonesMicrometers)
-                if (nZone ~= boneZone) && areaZonesMicrometers(nZone)>0
-                    muscleBinaryZone = maskZones==nZone;
-                    
-                    auxImg = VoronoizateCells(muscleBinaryZone,finalNucleiLabel.*muscleBinaryZone);    
-                    maskTotalVoronoi(auxImg>0)=auxImg(auxImg>0);
-                end
-            end
-        end
+    if ~exist(path2saveVoronoiImage,'dir'), mkdir(path2saveVoronoiImage); end
 
+    if exist(fullfile(path2saveVoronoiImage, pathMasks(nImg).name),'file')
+        maskTotalVoronoi=imread(fullfile(path2saveVoronoiImage, pathMasks(nImg).name));
+    else 
         for nZone =  1:length(areaZonesMicrometers)
             if (nZone ~= boneZone) && areaZonesMicrometers(nZone)>0
                 muscleBinaryZone = maskZones==nZone;
-                auxImg= double(maskTotalVoronoi).*double(muscleBinaryZone);
-                voronoiArea = regionprops(auxImg,'Area');
-                areaVoronoiCells = vertcat(voronoiArea.Area);
-                areaVoronoiCells(areaVoronoiCells==0)=[];
-    
-                maxAreaVoronoiCellsPerZone(nZone)=max(areaVoronoiCells/(infoImg.XResolution*infoImg.YResolution));
-                minAreaVoronoiCellsPerZone(nZone)=min(areaVoronoiCells/(infoImg.XResolution*infoImg.YResolution));
-                stdAreaVoronoiCellsPerZone(nZone)=std(areaVoronoiCells/(infoImg.XResolution*infoImg.YResolution));
+
+                auxImg = VoronoizateCells(muscleBinaryZone,finalNucleiLabel.*muscleBinaryZone);    
+                maskTotalVoronoi(auxImg>0)=auxImg(auxImg>0);
             end
         end
-        
-        clearvars finalNucleiLabel muscleBinaryZone auxImg
-        
-        imwrite(uint16(maskTotalVoronoi),fullfile(path2saveVoronoiImage, pathMasks(nImg).name))
-        % T = array2table([[1:length(areaZonesMicrometers)]',areaZonesMicrometers,nNucleiPerZone',nNucleiPerZoneByNucleiArea',areaZonesMicrometers./nNucleiPerZone',areaZonesMicrometers./nNucleiPerZoneByNucleiArea'],'VariableNames',{'muscleGroups','muscleGroupArea','numberOfStemCellNuclei','numberOfStemCellNucleiByAreaEstimation','areaPerNuclei','areaPerNucleiByAreaEstimation'});
-        T = array2table([areaZonesMicrometers',nNucleiPerZone',nNucleiPerZoneByNucleiArea',areaZonesMicrometers'./nNucleiPerZone',areaZonesMicrometers'./nNucleiPerZoneByNucleiArea',stdAreaVoronoiCellsPerZone,maxAreaVoronoiCellsPerZone,minAreaVoronoiCellsPerZone],'VariableNames',{'muscleGroupArea','numberOfStemCellNuclei','numberOfStemCellNucleiByAreaEstimation','areaPerNuclei','areaPerNucleiByAreaEstimation','stdAreaVoronoiCell','maxAreaVoronoiCell','minAreaVoronoiCell'});
-        writetable(T,fullfile('..','results','numberOfPax7PerMusclePerImage.xlsx'),'sheet',strrep(pathMasks(nImg).name,'.tif',''));
-
-        T_GeneralResults.('whole muscle area (um2)')(nImg)=sum(areaZonesMicrometers);
-        T_GeneralResults.('whole muscle nuclei/um2')(nImg)=totalNucleiByArea/sum(areaZonesMicrometers);
-    
     end
+
+    for nZone =  1:length(areaZonesMicrometers)
+        if (nZone ~= boneZone) && areaZonesMicrometers(nZone)>0
+            muscleBinaryZone = maskZones==nZone;
+            auxImg= double(maskTotalVoronoi).*double(muscleBinaryZone);
+            voronoiArea = regionprops(auxImg,'Area');
+            areaVoronoiCells = vertcat(voronoiArea.Area);
+            areaVoronoiCells(areaVoronoiCells==0)=[];
+
+            maxAreaVoronoiCellsPerZone(nZone)=max(areaVoronoiCells/(infoImg.XResolution*infoImg.YResolution));
+            minAreaVoronoiCellsPerZone(nZone)=min(areaVoronoiCells/(infoImg.XResolution*infoImg.YResolution));
+            stdAreaVoronoiCellsPerZone(nZone)=std(areaVoronoiCells/(infoImg.XResolution*infoImg.YResolution));
+        end
+    end
+
+    clearvars finalNucleiLabel muscleBinaryZone auxImg
+
+    imwrite(uint16(maskTotalVoronoi),fullfile(path2saveVoronoiImage, pathMasks(nImg).name))
+    T = array2table([areaZonesMicrometers',nNucleiPerZone',nNucleiPerZoneByNucleiArea',areaZonesMicrometers'./nNucleiPerZone',areaZonesMicrometers'./nNucleiPerZoneByNucleiArea',stdAreaVoronoiCellsPerZone,maxAreaVoronoiCellsPerZone,minAreaVoronoiCellsPerZone],'VariableNames',{'muscleGroupArea','numberOfStemCellNuclei','numberOfStemCellNucleiByAreaEstimation','areaPerNuclei','areaPerNucleiByAreaEstimation','stdAreaVoronoiCell','maxAreaVoronoiCell','minAreaVoronoiCell'});
+    writetable(T,fullfile('..','results','numberOfPax7PerMusclePerImage.xlsx'),'sheet',strrep(pathMasks(nImg).name,'.tif',''));
+
+    T_GeneralResults.('whole muscle area (um2)')(nImg)=sum(areaZonesMicrometers);
+    T_GeneralResults.('whole muscle nuclei/um2')(nImg)=totalNucleiByArea/sum(areaZonesMicrometers);
+
+
     
 end
 

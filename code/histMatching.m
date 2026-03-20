@@ -2,10 +2,10 @@
 
 %% as reference image we will consider KIKO_1_7um
 dirTifs = fullfile('..','data','rawImages','tifs');
-daysFolder = 'p15';
+daysFolder = 'p4';
 imgReference = imread(fullfile(dirTifs,'Initial dataset','KIKO 1 p20.tif'));
 
-listImages=dir(fullfile(dirTifs,daysFolder,'*25.tif'));
+listImages=dir(fullfile(dirTifs,daysFolder,'*26.tif'));
 
 % Display the file names
 for i = 1:length(listImages)
