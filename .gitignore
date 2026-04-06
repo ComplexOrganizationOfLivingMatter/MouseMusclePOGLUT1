@@ -61,3 +61,4 @@ data/*
 results/*
 biapy2DUnet/*
 *.ai
+*.txt
