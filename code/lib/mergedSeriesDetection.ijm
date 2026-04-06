@@ -1,14 +1,14 @@
 run("Bio-Formats Macro Extensions");
 // Paso 1: Obtener archivo .lif manualmente (compatibilidad completa)
-dir = getDirectory("Selecciona el directorio del archivo .lif");
-name = getString("Nombre exacto del archivo (.lif):", "archivo.lif");
+dir = getDirectory("Select dir of the .lif file");
+name = getString("Exact name of the file (.lif):", "file.lif");
 path = dir + name;
 
 // Paso 2: Preparar Bio-Formats
 Ext.setId(path);
 Ext.getSeriesCount(seriesCount);
 
-print("🔍 Se encontraron " + seriesCount + " series en el archivo:\n");
+print("🔍 found " + seriesCount + " series within the file:\n");
 
 // Paso 3: Inicializar arrays
 sizeArray = newArray(seriesCount);
@@ -45,7 +45,7 @@ for (i = 0; i < seriesCount-1; i++) {
 }
 
 // Paso 6: Mostrar resultados ordenados
-print("📋 Series ordenadas por resolución XY (de mayor a menor):");
+print("📋 Ordered series by XY resolution (top to bottom):");
 for (i = 0; i < seriesCount; i++) {
     print((i+1) + ". " + labelArray[i]);
 }
