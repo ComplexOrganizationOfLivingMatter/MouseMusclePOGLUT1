@@ -15,6 +15,9 @@ MAX_MUSCLE_ZONE = 15
 MIN_AREA_UM2 = 10        
 MAX_NUCLEI_AREA_UM2 = 70 
 UM_PER_PIXEL = 0.5055443 
+BINARY_THRESHOLD = 250/255
+EXCLUDED_ZONES = {0, BONE_ZONE, 13}
+
 
 def process_single_image(mask_path, path_preds, output_mask_root, output_vor_root):
     img_name = mask_path.name
@@ -31,6 +34,8 @@ def process_single_image(mask_path, path_preds, output_mask_root, output_vor_roo
     try:
         
         # CHECK IF PREVIOUSLY PROCESSED
+        goto_extraction = False  # default: we need to process
+
         if vor_file_path.exists() and mask_file_path.exists():
                 try:
                     # 1. Load the 32-bit Labeled Voronoi Map
@@ -85,7 +90,7 @@ def process_single_image(mask_path, path_preds, output_mask_root, output_vor_roo
             # --- STAGE 2: BINARIZATION & FILTERING ---
             if "modelv2" in str(pred_path).lower():
                 # Use a high-confidence threshold for Model V2
-                bw = (img_pred >= 250).astype(np.uint8)
+                bw = (img_pred >= 255*BINARY_THRESHOLD).astype(np.uint8)
             else:
                 # Otsu for Model V1
                 try:
@@ -100,8 +105,8 @@ def process_single_image(mask_path, path_preds, output_mask_root, output_vor_roo
                 labels, min_size=MIN_AREA_UM2/pixel_area_um2
             ).astype(np.uint32)
             
-            # Exclude Bone and Outside regions
-            final_nuclei_mask[(mask_zones == 0) | (mask_zones == BONE_ZONE)] = 0
+            # Exclude Bone and non representative regions
+            final_nuclei_mask[np.isin(mask_zones, list(EXCLUDED_ZONES))] = 0
             
             # Save segmented nuclei
             tifffile.imwrite(str(mask_file_path), (final_nuclei_mask > 0).astype(np.uint8)*255)
@@ -112,10 +117,13 @@ def process_single_image(mask_path, path_preds, output_mask_root, output_vor_roo
             # Pre-group nuclei by zone to avoid searching the full mask 15 times
             all_props = measure.regionprops(final_nuclei_mask)
             zone_to_nuclei = {z: [] for z in range(1, MAX_MUSCLE_ZONE + 1)}
+                
+
             for p in all_props:
                 cy, cx = map(int, p.centroid)
                 z_id = mask_zones[cy, cx]
-                if 0 < z_id <= MAX_MUSCLE_ZONE and z_id != BONE_ZONE:
+
+                if 0 < z_id <= MAX_MUSCLE_ZONE and z_id not in EXCLUDED_ZONES:
                     zone_to_nuclei[z_id].append(p)
     
             for z, nuclei_list in zone_to_nuclei.items():
@@ -166,7 +174,7 @@ def process_single_image(mask_path, path_preds, output_mask_root, output_vor_roo
         total_a, total_n = 0, 0
 
         for z in range(1, MAX_MUSCLE_ZONE + 1):
-            if z == BONE_ZONE: continue
+            if z in EXCLUDED_ZONES: continue
             z_m = (mask_zones == z)
             if np.any(z_m):
                 z_area = np.sum(z_m) * pixel_area_um2
@@ -215,9 +223,10 @@ def process_single_image(mask_path, path_preds, output_mask_root, output_vor_roo
 # --- EXECUTION ---
 if __name__ == "__main__":
     BASE_DIR = Path('..')
-    PATH_MASKS = list((BASE_DIR / 'data/annotatedMuscleMasks').rglob('*.tif'))
-    PATH_PREDS = list((BASE_DIR / 'data/predictions/all_predictions_18032026_modelv2/input20260318_154449/results/input20260318_154449_1/per_image').rglob('*.tif'))
-    
+    PATH_MASKS = list((BASE_DIR / 'data/annotatedMuscleMasks/').rglob('*.tif'))
+   #  PATH_PREDS = list((BASE_DIR / 'data/predictions/all_predictions_modelv2/input20260318_154449/results/input20260318_154449_1/per_image').rglob('*.tif'))
+    PATH_PREDS = list((BASE_DIR / 'data/predictions/all_predictions_modelv2/full_dataset').rglob('*.tif'))
+#    RESULT_DIR = BASE_DIR / 'results' / f"modelV2_THR_{BINARY_THRESHOLD}"
     RESULT_DIR = BASE_DIR / 'results' / 'modelV2'
     QC_ROOT = RESULT_DIR / 'binaryNucleiStemCells_filtered'
     VOR_ROOT = RESULT_DIR / 'voronoiImages'
