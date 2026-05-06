@@ -8,8 +8,8 @@ from skimage.exposure import match_histograms
 # Histogram Matching function
 # as reference image we will consider KIKO_1_7um
 
-dir_tifs = os.path.join('..', 'data', 'rawImages', 'tifs')
-days_folder = 'p4'
+dir_tifs = os.path.join('..','..', 'data', 'rawImages', 'tifs')
+days_folder = 'p0'
 
 # Read the reference image
 ref_path = os.path.join(dir_tifs, 'Initial dataset', 'KIKO 1 p20.tif')
