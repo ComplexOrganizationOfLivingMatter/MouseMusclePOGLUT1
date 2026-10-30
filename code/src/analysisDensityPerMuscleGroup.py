@@ -1,6 +1,6 @@
 """
 Pax7 Comprehensive Analysis: Density, Voronoi Mean, and Voronoi SD
-Created for Pedro's Muscle Regeneration Pipeline
+Includes Outlier Detection & Logging Report (Exported as Excel)
 """
 
 import numpy as np
@@ -45,14 +45,16 @@ def load_latest_excel_report(result_dir: Path) -> pd.DataFrame:
 
 
 # ============================================================
-# OUTLIER FILTERING HELPER (Mean ± 2*SD)
+# OUTLIER DETECTION & FILTERING HELPER (Mean ± 2*SD)
 # ============================================================
-def filter_outliers_2std(df: pd.DataFrame, value_col: str) -> pd.DataFrame:
+def filter_and_log_outliers(df: pd.DataFrame, value_col: str, metric_name: str) -> tuple[pd.DataFrame, list]:
     """
-    Removes data points further than 2 standard deviations from the mean 
+    Identifies and logs data points further than 2 standard deviations from the mean 
     for each combination of age, genotype, and muscle_group.
+    Returns the cleaned dataframe and a list of logged outlier records.
     """
     filtered_groups = []
+    outlier_records = []
     group_cols = ["age", "genotype", "muscle_group"]
     
     for _, group in df.groupby(group_cols):
@@ -64,10 +66,29 @@ def filter_outliers_2std(df: pd.DataFrame, value_col: str) -> pd.DataFrame:
         else:
             lower_bound = mean_val - 2 * std_val
             upper_bound = mean_val + 2 * std_val
+            
+            # Separate clean data vs outliers
             clean_group = group[(group[value_col] >= lower_bound) & (group[value_col] <= upper_bound)]
+            outliers = group[(group[value_col] < lower_bound) | (group[value_col] > upper_bound)]
+            
             filtered_groups.append(clean_group)
             
-    return pd.concat(filtered_groups, ignore_index=True)
+            # Log outliers for review
+            for _, row in outliers.iterrows():
+                outlier_records.append({
+                    "metric": metric_name,
+                    "image": row.get("image", "unknown"),
+                    "age": row["age"],
+                    "genotype": row["genotype"],
+                    "muscle_group": row["muscle_group"],
+                    "value": row[value_col],
+                    "group_mean": mean_val,
+                    "group_std": std_val,
+                    "lower_bound": lower_bound,
+                    "upper_bound": upper_bound
+                })
+            
+    return pd.concat(filtered_groups, ignore_index=True), outlier_records
 
 
 # ============================================================
@@ -133,15 +154,14 @@ def compute_per_zone_voronoi_stats(df_raw: pd.DataFrame, mask_root: Path, vor_ro
 # ============================================================
 # PLOTTING HELPER WITH ORGANIZED DIRECTORIES
 # ============================================================
-def generate_metric_plots(melted_df: pd.DataFrame, metric_col: str, metric_label: str, subfolder_name: str):
+def generate_metric_plots(melted_df: pd.DataFrame, metric_col: str, metric_label: str, subfolder_name: str) -> list:
     """
     Generates shared and independent Y-axis plots for a given metric 
-    after filtering out values outside Mean ± 2*SD.
+    after filtering out values outside Mean ± 2*SD and logs the outliers.
     """
-    print(f"\n[STAGE] Generating {metric_label} plots (Outliers > 2*SD removed)...")
+    print(f"\n[STAGE] Generating {metric_label} plots & detecting outliers (> 2*SD)...")
     
-    # Apply 2*SD Outlier Filter per condition
-    filtered_df = filter_outliers_2std(melted_df, metric_col)
+    filtered_df, outlier_records = filter_and_log_outliers(melted_df, metric_col, subfolder_name)
 
     global_max = filtered_df[metric_col].max()
     if np.isnan(global_max) or global_max == 0:
@@ -237,18 +257,21 @@ def generate_metric_plots(melted_df: pd.DataFrame, metric_col: str, metric_label
         except Exception as e:
             plt.close()
 
+    return outlier_records
+
 
 # ============================================================
 # MAIN EXECUTION
 # ============================================================
 if __name__ == "__main__":
     print("=" * 60)
-    print("PAX7 ANALYSIS: DENSITY, VORONOI MEAN & SD (MEAN ± 2*SD FILTER)")
+    print("PAX7 ANALYSIS: DENSITY, VORONOI MEAN & SD + EXCEL OUTLIER REPORT")
     print("=" * 60)
 
     df_raw = load_latest_excel_report(RESULT_DIR)
+    all_outliers = []
 
-    # 1. Nuclei Densities (Saved to plots_density_by_age/density/)
+    # 1. Nuclei Densities
     density_cols = [col for col in df_raw.columns if col.startswith("nuclei/um2 g")]
     if density_cols:
         melted_density = pd.melt(df_raw, id_vars=["image", "genotype", "age"], value_vars=density_cols, var_name="muscle_group", value_name="density")
@@ -258,7 +281,8 @@ if __name__ == "__main__":
         melted_density["group_num"] = melted_density["muscle_group"].str.extract(r'(\d+)').astype(int)
         melted_density = melted_density.sort_values("group_num")
 
-        generate_metric_plots(melted_density, "density", "Density (nuclei / um2)", "density")
+        density_outliers = generate_metric_plots(melted_density, "density", "Density (nuclei / um2)", "density")
+        all_outliers.extend(density_outliers)
 
     # 2. Voronoi Cell Area Stats (Mean & SD)
     df_voronoi_stats = compute_per_zone_voronoi_stats(df_raw, MASK_ROOT, VOR_ROOT)
@@ -267,13 +291,29 @@ if __name__ == "__main__":
         df_voronoi_stats["group_num"] = df_voronoi_stats["muscle_group"].str.extract(r'(\d+)').astype(int)
         df_voronoi_stats = df_voronoi_stats.sort_values("group_num")
 
-        # Mean Voronoi Cell Area (Saved to plots_density_by_age/voronoi_mean/)
-        generate_metric_plots(df_voronoi_stats, "mean_voronoi_area", "Mean Voronoi Cell Area (um2)", "voronoi_mean")
+        mean_outliers = generate_metric_plots(df_voronoi_stats, "mean_voronoi_area", "Mean Voronoi Cell Area (um2)", "voronoi_mean")
+        all_outliers.extend(mean_outliers)
 
-        # SD of Voronoi Cell Area (Saved to plots_density_by_age/voronoi_std/)
-        generate_metric_plots(df_voronoi_stats, "std_voronoi_area", "SD of Voronoi Cell Area (um2)", "voronoi_std")
+        std_outliers = generate_metric_plots(df_voronoi_stats, "std_voronoi_area", "SD of Voronoi Cell Area (um2)", "voronoi_std")
+        all_outliers.extend(std_outliers)
+
+    # ========================================================
+    # EXPORT OUTLIER REPORT TO EXCEL (.XLSX)
+    # ========================================================
+    outlier_excel_path = RESULT_DIR / "detected_outliers_report.xlsx"
+    if all_outliers:
+        df_outliers = pd.DataFrame(all_outliers)
+        with pd.ExcelWriter(outlier_excel_path, engine="openpyxl") as writer:
+            df_outliers.to_excel(writer, sheet_name="Outliers", index=False)
+        print(f"\n[REPORT] Detected {len(df_outliers)} outlier data points.")
+        print(f"-> Outlier tracking report saved to Excel:\n   {outlier_excel_path}")
+    else:
+        # Create an empty or placeholder sheet so the file still generates cleanly
+        with pd.ExcelWriter(outlier_excel_path, engine="openpyxl") as writer:
+            pd.DataFrame(columns=["metric", "image", "age", "genotype", "muscle_group", "value"]).to_excel(writer, sheet_name="Outliers", index=False)
+        print(f"\n[REPORT] No outliers exceeding 2*SD were detected. Blank report saved to:\n   {outlier_excel_path}")
 
     print("\n" + "=" * 60)
-    print("[SUCCESS] ALL DENSITY, VORONOI MEAN, AND VORONOI SD PLOTS GENERATED")
+    print("[SUCCESS] ALL PLOTS AND EXCEL OUTLIER REPORTS GENERATED")
     print(f"Results located in: {RESULT_DIR / 'plots_density_by_age'}")
     print("=" * 60)
