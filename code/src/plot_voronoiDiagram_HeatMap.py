@@ -12,7 +12,7 @@ import gc
 AGES = ['p0', 'p4', 'p7', 'p10', 'p15', 'p20', 'p35']
 UM_PER_PIXEL = 0.5055443
 PIXEL_AREA_UM2 = UM_PER_PIXEL ** 2
-MODEL_FOLDER = 'modelV2'
+MODEL_FOLDER = 'largeModel_dotDetection'
 
 # Path Setup
 PATH_VORONOI = Path(f"../../results/{MODEL_FOLDER}/voronoiImages")
@@ -27,7 +27,7 @@ CMAP = 'RdBu_r'  # Blue: Small/Dense (High log ratio) | Red: Big/Sparse (Low log
 V_LIMIT = 0.6    # Limits for the log10 color scale
 RENDER_MAX_DIM = 2000  # Resolution cap for PNGs to prevent Out Of Memory (OOM) crashes
 
-ONLY_COMPOSITES = True  # Set to True to skip TIF processing and use existing PNGs
+ONLY_COMPOSITES = False  # Set to True to skip TIF processing and use existing PNGs
 
 # =========================================================
 # UTILITIES
@@ -337,13 +337,13 @@ def create_montage_from_existing_pngs(age):
 # =========================================================
 # EXECUTION
 # =========================================================
-
+#
 if __name__ == "__main__":
-    if ONLY_COMPOSITES:
-        print("Mode: Montage generation only (skipping TIF processing).")
-        for age in AGES:
-            create_montage_from_existing_pngs(age)
-    else:
+#    if ONLY_COMPOSITES:
+#        print("Mode: Montage generation only (skipping TIF processing).")
+#        for age in AGES:
+#            create_montage_from_existing_pngs(age)
+#    else:
         wt_stats = get_wt_averages_um2()
         extract_detailed_stats(wt_stats)
         for age in AGES:

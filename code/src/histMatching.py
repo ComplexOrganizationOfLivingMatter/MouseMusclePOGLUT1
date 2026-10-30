@@ -9,7 +9,7 @@ from skimage.exposure import match_histograms
 # as reference image we will consider KIKO_1_7um
 
 dir_tifs = os.path.join('..','..', 'data', 'rawImages', 'tifs')
-days_folder = 'p0'
+days_folder = 'p20'
 
 # Read the reference image
 ref_path = os.path.join(dir_tifs, 'Initial dataset', 'KIKO 1 p20.tif')
@@ -30,6 +30,14 @@ for img_path in list_images:
     # Extract just the file name (equivalent to listImages(i).name)
     img_name = os.path.basename(img_path)
     
+    # Save the matched image
+    save_path = os.path.join(target_dir, img_name)
+    
+    # -------------------------------------------------------- # CHECK IF THE FILE ALREADY EXISTS # -------------------------------------------------------- 
+    if os.path.exists(save_path): 
+        print(f"SKIPPING (already exists): {img_name}") 
+        continue
+    
     # Read the target image
     img2HM = io.imread(img_path)
     
@@ -48,6 +56,5 @@ for img_path in list_images:
     plt.pause(0.5) # Pauses for half a second to display before closing
     plt.close()
     
-    # Save the matched image
-    save_path = os.path.join(target_dir, img_name)
+    
     io.imsave(save_path, matched_image)

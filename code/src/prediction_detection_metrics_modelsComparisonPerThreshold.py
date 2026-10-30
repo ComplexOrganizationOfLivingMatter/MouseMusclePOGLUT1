@@ -14,11 +14,14 @@ from scipy.spatial.distance import cdist
 
 root_path = r'F:\Lab\MouseMusclePOGLUT1\results\detectionMetrics'
 
-gt_folder = os.path.join(root_path, 'imagesTest', 'GT emi_vicky combined')
+#gt_folder = os.path.join(root_path, 'imagesTest', 'GT emi_vicky combined')
+gt_folder = os.path.join(root_path, 'imagesTest', 'GT points binary')
 
 models = {
-    'modelV1': os.path.join(root_path, 'imagesTest', 'modelV1'),
-    'modelV2': os.path.join(root_path, 'imagesTest', 'modelV2')
+    #'modelV1': os.path.join(root_path, 'imagesTest', 'modelV1'),
+    #'modelV2': os.path.join(root_path, 'imagesTest', 'modelV2')
+    'modelDetection': os.path.join(root_path, 'imagesTest', 'modelDetection_large')
+
 }
 
 dist_thresh = 10
@@ -80,9 +83,9 @@ def evaluate_model(pred_folder, model_name):
             gt_bin = gt > 0
             pr_bin = BW > thr
 
-            pr_bin = ndimage.binary_fill_holes(pr_bin)
-            pr_bin = morphology.binary_closing(pr_bin, morphology.disk(1))
-            pr_bin = morphology.remove_small_objects(pr_bin, min_size=min_area_pixels)
+            #pr_bin = ndimage.binary_fill_holes(pr_bin)
+            #pr_bin = morphology.binary_closing(pr_bin, morphology.disk(1))
+            #pr_bin = morphology.remove_small_objects(pr_bin, min_size=min_area_pixels)
 
             gt_L = measure.label(gt_bin, connectivity=2)
             pr_L = measure.label(pr_bin, connectivity=2)

@@ -3,7 +3,7 @@
 // Save name
 nameImg = getTitle();
 
-//run("Stack to Hyperstack...", "order=xyctz channels=3 slices=1 frames=1 display=Color");
+run("Stack to Hyperstack...", "order=xyctz channels=3 slices=1 frames=1 display=Color");
 
 // Update dimensions
 getDimensions(width, height, channels, slices, frames);
@@ -46,9 +46,9 @@ run("Merge Channels...",
 // Convert to RGB image (8-bit)
 run("RGB Color");
 
-days = "4";
-name = "KIKO 777";
-datePhoto = "100226";
+days = "20";
+name = "WT 53";
+datePhoto = "040926";
 saveAs("Tiff", "F:/Lab/MouseMusclePOGLUT1/data/rawImages/tifs/p"+days+"/"+ name +" p" +days+" "+datePhoto+".tif");
 close();
 close();

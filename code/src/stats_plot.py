@@ -6,8 +6,8 @@ from pathlib import Path
 import numpy as np
 
 # --- CONFIGURATION ---
-MODEL_FOLDER = 'modelV2'
-excel_files = list(Path(f"../../results/{MODEL_FOLDER}").glob('Pax7_Genotype_Analysis_*.xlsx'))
+MODEL_FOLDER = 'largeModel_dotDetection'
+excel_files = list(Path(f"../../results/{MODEL_FOLDER}").glob('Pax7_*.xlsx'))
 EXCEL_PATH = excel_files[0]
 OUTPUT_DIR = Path(f"../../results/{MODEL_FOLDER}/plots_stats")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
