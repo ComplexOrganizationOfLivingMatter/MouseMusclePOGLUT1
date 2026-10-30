@@ -7,7 +7,7 @@ Created on Thu Oct 29 18:02:15 2026
 
 """
 Pax7 Spatial Gradient, Radial Rings & Bone-Centered Dorso-Ventral Analysis
-Memory-Optimized & Density-Normalized for Pedro's Muscle Regeneration Pipeline
+Memory-Optimized, Mask-Restricted & Cleanly Styled for Pedro's Muscle Regeneration Pipeline
 """
 
 import numpy as np
@@ -35,8 +35,6 @@ RADIAL_BIN_UM = 200       # Radial rings width outwards from bone
 DV_STRIPE_BIN_UM = 200    # DV parallel stripes width from ventral to dorsal
 
 # --- OPTIONAL TOGGLE ---
-# Set to True only if you need to regenerate the ~500x500 debug overlay maps.
-# Set to False to silence and skip this step for faster execution.
 GENERATE_DEBUG_MAPS = False
 
 # Set plotting style
@@ -60,27 +58,29 @@ def load_latest_excel_report(result_dir: Path) -> pd.DataFrame:
 def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: Path, output_dir: Path):
     """
     Computes spatial distributions, muscle geometry, and true mask-restricted densities 
-    (Pax7 count / muscle area in µm²) for radial rings and bone-centered DV stripes.
+    (Pax7 count / muscle area in µm²), strictly excluding the bone region.
     """
     print("\n[STAGE] Analyzing Radial Rings, Bone-Centered DV Axes, and Mask-Restricted Densities...")
     
-    density_ring_records = []
-    density_vector_records = []
-    geometry_records = []
+    # Resolve output directory to absolute path to prevent Windows relative path OSError [Errno 22]
+    output_dir = output_dir.resolve()
+    debug_dir = (output_dir / "spatial_debug_visualizations").resolve()
+    plot_dir = (output_dir / "plots_spatial_organization").resolve()
 
-    debug_dir = output_dir / "spatial_debug_visualizations"
     if GENERATE_DEBUG_MAPS:
         debug_dir.mkdir(parents=True, exist_ok=True)
 
-    plot_dir = output_dir / "plots_spatial_organization"
     plot_dir.mkdir(parents=True, exist_ok=True)
+
+    density_ring_records = []
+    density_vector_records = []
+    geometry_records = []
 
     for _, row in df.iterrows():
         img_name = row["image"]
         age = str(row["age"]).strip()
         genotype = row["genotype"]
 
-        # Find corresponding mask and voronoi files
         mask_path = mask_root / age / img_name
         if not mask_path.exists():
             found = list(mask_root.rglob(img_name))
@@ -93,7 +93,6 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
             continue
 
         try:
-            # Load anatomical annotation mask (zones) and Voronoi/nuclear detection map
             mask_zones = io.imread(str(mask_path))
             mask_zones = mask_zones[..., 0] if mask_zones.ndim == 3 else mask_zones
             
@@ -111,7 +110,11 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
             bone_coords = np.argwhere(bone_mask)
             bone_centroid = bone_coords.mean(axis=0) # [y, x]
 
-            muscle_mask = (mask_zones > 0)
+            # Estimate bone radius using standard equivalent_diameter
+            bone_diameters = [p.equivalent_diameter for p in measure.regionprops(bone_mask.astype(int))]
+            bone_radius_um = (max(bone_diameters) * UM_PER_PIXEL / 2.0) if bone_diameters else 100.0
+
+            muscle_mask = (mask_zones > 0) & (mask_zones != BONE_ZONE)
             muscle_coords = np.argwhere(muscle_mask)
             if len(muscle_coords) == 0:
                 continue
@@ -162,7 +165,8 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
                 "minor_axis_um": minor_axis_um,
                 "major_axis_um": major_axis_um,
                 "dorsal_span_um": dorsal_span * UM_PER_PIXEL,
-                "ventral_span_um": ventral_span * UM_PER_PIXEL
+                "ventral_span_um": ventral_span * UM_PER_PIXEL,
+                "bone_radius_um": bone_radius_um
             })
 
             # ========================================================
@@ -173,6 +177,8 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
             bone_dist_map = distance_transform_edt(~bone_mask) * UM_PER_PIXEL
             distances_to_bone = map_coordinates(bone_dist_map, [n_poss[:, 0], n_poss[:, 1]], order=1, mode='nearest')
 
+            valid_nucleus_mask = (mask_zones[tuple(n_poss.astype(int).T)] != BONE_ZONE) if len(n_poss) > 0 else []
+            
             muscle_bone_dists = bone_dist_map[muscle_mask]
             muscle_ring_bins = (muscle_bone_dists // RADIAL_BIN_UM) * RADIAL_BIN_UM
             unique_rings, ring_pixel_counts = np.unique(muscle_ring_bins, return_counts=True)
@@ -190,14 +196,16 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
             # 4. AGGREGATE COUNTS & DENSITY CALCULATION (Pax7 / µm²)
             # ========================================================
             image_ring_counts = {}
-            for dist in distances_to_bone:
-                r_bin = int(dist // RADIAL_BIN_UM) * RADIAL_BIN_UM
-                image_ring_counts[r_bin] = image_ring_counts.get(r_bin, 0) + 1
+            for i, dist in enumerate(distances_to_bone):
+                if valid_nucleus_mask[i]:
+                    r_bin = int(dist // RADIAL_BIN_UM) * RADIAL_BIN_UM
+                    image_ring_counts[r_bin] = image_ring_counts.get(r_bin, 0) + 1
 
             image_stripe_counts = {}
-            for dv_um in dv_bone_projections_um:
-                s_bin = int(dv_um // DV_STRIPE_BIN_UM) * DV_STRIPE_BIN_UM
-                image_stripe_counts[s_bin] = image_stripe_counts.get(s_bin, 0) + 1
+            for i, dv_um in enumerate(dv_bone_projections_um):
+                if valid_nucleus_mask[i]:
+                    s_bin = int(dv_um // DV_STRIPE_BIN_UM) * DV_STRIPE_BIN_UM
+                    image_stripe_counts[s_bin] = image_stripe_counts.get(s_bin, 0) + 1
 
             for r_bin, count in image_ring_counts.items():
                 mask_area = ring_area_dict.get(r_bin, 0)
@@ -228,7 +236,6 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
             # ========================================================
             # 5. OPTIONAL DEBUG VISUALIZATION MAPS (~500x500)
             # ========================================================
-            # Only runs if GENERATE_DEBUG_MAPS is set to True
             if GENERATE_DEBUG_MAPS:
                 fig, ax = plt.subplots(figsize=(6, 6))
                 ax.imshow(mask_zones, cmap="tab20", alpha=0.6)
@@ -242,7 +249,6 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
                 
                 ax.set_title(f"{img_name}\n({age} - {genotype})", fontsize=9)
                 ax.axis('off')
-                ax.legend(loc='upper right', fontsize=8)
                 
                 clean_stem = Path(img_name).stem.replace(" ", "_")
                 fig.savefig(debug_dir / f"debug_spatial_{clean_stem}.png", dpi=80, bbox_inches='tight')
@@ -261,9 +267,11 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
         print(f"  -> Muscle geometry summary saved to: {output_dir / 'muscle_geometry_summary.xlsx'}")
 
     # ========================================================
-    # PLOTTING: DENSITY WITH INDIVIDUAL SAMPLE LINES & SD SHADING
+    # PLOTTING: CLEAN LINE PLOTS (NO LEGEND, DASHS FOR KIKO, BONE HIGHLIGHT)
     # ========================================================
-    print("[STAGE] Generating Density Line Plots with Individual Sample Support & SD Shading...")
+    print("[STAGE] Generating Clean Density Line Plots with Bone Highlights & Dashed KIKO Lines...")
+
+    avg_bone_r = df_geom["bone_radius_um"].mean() if not df_geom.empty else 100.0
 
     # 1. Radial Ring Densities from Bone
     if not df_rings.empty:
@@ -273,6 +281,7 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
                 continue
 
             plt.figure(figsize=(10, 6))
+            # Individual sample lines (gray, transparent)
             sns.lineplot(
                 data=df_age_ring,
                 x="ring_order",
@@ -280,30 +289,40 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
                 units="image",
                 estimator=None,
                 color="gray",
-                alpha=0.25,
-                linewidth=1.0,
-                label="Individual Muscle Sample"
+                alpha=0.20,
+                linewidth=1.0
             )
+            # WT Aggregate Mean (Continuous line)
             sns.lineplot(
-                data=df_age_ring,
+                data=df_age_ring[df_age_ring["genotype"] == "WT"],
                 x="ring_order",
                 y="pax7_density_um2",
-                hue="genotype",
-                style="genotype",
-                markers=True,
-                dashes=False,
-                palette={"WT": "#2b5c8f", "KIKO": "#d95f02"},
+                color="#2b5c8f",
                 errorbar=("sd", 1),
                 linewidth=2.5,
-                markersize=8
+                linestyle='-',
+                marker='o'
             )
-            plt.title(f"Pax7 Radial Density from Bone ({RADIAL_BIN_UM}µm rings) — Age: {age}", fontsize=13, fontweight="bold")
-            plt.xlabel("Distance from Bone (µm) [0 = Bone]", fontweight="bold")
+            # KIKO Aggregate Mean (Dashed line)
+            sns.lineplot(
+                data=df_age_ring[df_age_ring["genotype"] == "KIKO"],
+                x="ring_order",
+                y="pax7_density_um2",
+                color="#d95f02",
+                errorbar=("sd", 1),
+                linewidth=2.5,
+                linestyle='--',
+                marker='s'
+            )
+            plt.axvspan(0, avg_bone_r, color='lightgray', alpha=0.4)
+            
+            plt.title(f"Pax7 Radial Density from Bone ({RADIAL_BIN_UM} µm rings) — Age: {age}", fontsize=13, fontweight="bold")
+            plt.xlabel("Distance from Bone (µm) [0 = Bone Origin]", fontweight="bold")
             plt.ylabel(r"Pax7 Density ($\mu m^{-2}$)", fontweight="bold")
-            plt.legend(title="Legend")
             plt.tight_layout()
 
-            safe_age = str(age).replace(" ", "_")
+            # Sanitize age string to avoid invalid Windows path arguments
+            safe_age = "".join(c for c in str(age) if c.isalnum() or c in ('_', '-')).strip()
             plt.savefig(plot_dir / f"radial_rings_density_line_{safe_age}.png", dpi=300)
             plt.close()
 
@@ -324,33 +343,43 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
                 units="image",
                 estimator=None,
                 color="gray",
-                alpha=0.25,
-                linewidth=1.0,
-                label="Individual Muscle Sample"
+                alpha=0.20,
+                linewidth=1.0
             )
             sns.lineplot(
-                data=df_age_vec,
+                data=df_age_vec[df_age_vec["genotype"] == "WT"],
                 x="dv_stripe_order",
                 y="pax7_density_um2",
-                hue="genotype",
-                palette={"WT": "#2b5c8f", "KIKO": "#d95f02"},
+                color="#2b5c8f",
                 errorbar=("sd", 1),
                 linewidth=2.5,
-                markers=True
+                linestyle='-',
+                marker='o'
             )
-            plt.axvline(0, color='red', linestyle='--', label="Bone Origin (0 µm)")
-            plt.title(f"Pax7 Density along Bone-Centered DV Stripes ({DV_STRIPE_BIN_UM}µm) — Age: {age}", fontsize=13, fontweight="bold")
+            sns.lineplot(
+                data=df_age_vec[df_age_vec["genotype"] == "KIKO"],
+                x="dv_stripe_order",
+                y="pax7_density_um2",
+                color="#d95f02",
+                errorbar=("sd", 1),
+                linewidth=2.5,
+                linestyle='--',
+                marker='s'
+            )
+            plt.axvspan(-avg_bone_r, avg_bone_r, color='lightgray', alpha=0.4)
+            plt.axvline(0, color='red', linestyle=':')
+            
+            plt.title(f"Pax7 Density along Bone-Centered DV Stripes ({DV_STRIPE_BIN_UM} µm) — Age: {age}", fontsize=13, fontweight="bold")
             plt.xlabel("Absolute Distance from Bone along DV Axis (µm) [- Ventral, + Dorsal]", fontweight="bold")
             plt.ylabel(r"Pax7 Density ($\mu m^{-2}$)", fontweight="bold")
             plt.xticks(rotation=45)
-            plt.legend(title="Legend")
             plt.tight_layout()
 
-            safe_age = str(age).replace(" ", "_")
+            safe_age = "".join(c for c in str(age) if c.isalnum() or c in ('_', '-')).strip()
             plt.savefig(plot_dir / f"dv_absolute_stripes_density_line_{safe_age}.png", dpi=300)
             plt.close()
 
-    print(f"  -> All density visualizations and line plots successfully saved in: {output_dir}")
+    print(f"  -> All clean density visualizations and line plots successfully saved in: {output_dir}")
 
 
 # ============================================================
