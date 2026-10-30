@@ -34,6 +34,11 @@ PIXEL_AREA_UM2 = UM_PER_PIXEL**2
 RADIAL_BIN_UM = 200       # Radial rings width outwards from bone
 DV_STRIPE_BIN_UM = 200    # DV parallel stripes width from ventral to dorsal
 
+# --- OPTIONAL TOGGLE ---
+# Set to True only if you need to regenerate the ~500x500 debug overlay maps.
+# Set to False to silence and skip this step for faster execution.
+GENERATE_DEBUG_MAPS = False
+
 # Set plotting style
 sns.set_theme(style="whitegrid")
 plt.rcParams.update({'font.sans-serif': 'Arial', 'font.size': 11})
@@ -63,9 +68,9 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
     density_vector_records = []
     geometry_records = []
 
-    # Directories for debug maps and plots
     debug_dir = output_dir / "spatial_debug_visualizations"
-    debug_dir.mkdir(parents=True, exist_ok=True)
+    if GENERATE_DEBUG_MAPS:
+        debug_dir.mkdir(parents=True, exist_ok=True)
 
     plot_dir = output_dir / "plots_spatial_organization"
     plot_dir.mkdir(parents=True, exist_ok=True)
@@ -100,20 +105,17 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
             # ========================================================
             # 1. BONE & LANDMARK LOCALIZATION
             # ========================================================
-            # Locate Bone (Zone 6) and compute its centroid as the origin (0.0 µm)
             bone_mask = (mask_zones == BONE_ZONE)
             if not np.any(bone_mask):
                 continue
             bone_coords = np.argwhere(bone_mask)
             bone_centroid = bone_coords.mean(axis=0) # [y, x]
 
-            # Define full muscle tissue mask (all zones > 0)
             muscle_mask = (mask_zones > 0)
             muscle_coords = np.argwhere(muscle_mask)
             if len(muscle_coords) == 0:
                 continue
 
-            # Calculate muscle geometry (major and minor axes)
             muscle_props = measure.regionprops(measure.label(muscle_mask))
             if muscle_props:
                 main_muscle = max(muscle_props, key=lambda r: r.area)
@@ -122,7 +124,6 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
             else:
                 major_axis_um, minor_axis_um = np.nan, np.nan
 
-            # Locate Dorsal (Group 5) & Ventral (Groups 8, 9, 10) Landmarks
             g5_mask = (mask_zones == 5)
             ventral_mask = np.isin(mask_zones, [8, 9, 10])
 
@@ -135,18 +136,15 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
             # ========================================================
             # 2. DORSO-VENTRAL (DV) AXIS VECTOR & PROJECTIONS
             # ========================================================
-            # Establish DV unit vector pointing from Ventral -> Dorsal 
-            # (so Dorsal is positive +, Ventral is negative -, and Bone is 0.0)
             dv_vector = g5_centroid - ventral_centroid
             dv_length = np.linalg.norm(dv_vector)
             if dv_length == 0:
                 continue
             dv_unit = dv_vector / dv_length
 
-            # Project all muscle pixels onto DV axis relative to BONE centroid (= 0)
             muscle_dv_projections = np.dot(muscle_coords - bone_centroid, dv_unit)
-            dorsal_bg_edge_bone = np.max(muscle_dv_projections)  # Dorsal background edge (+ distance)
-            ventral_bg_edge_bone = np.min(muscle_dv_projections) # Ventral background edge (- distance)
+            dorsal_bg_edge_bone = np.max(muscle_dv_projections)  
+            ventral_bg_edge_bone = np.min(muscle_dv_projections) 
 
             dorsal_span = dorsal_bg_edge_bone  
             ventral_span = abs(ventral_bg_edge_bone) 
@@ -172,23 +170,19 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
             # ========================================================
             n_poss = np.array([p.centroid for p in props]) # Shape: (N_nuclei, 2) [y, x]
 
-            # A. Radial Ring Distance Map from Bone (~bone_mask inverted for edt)
             bone_dist_map = distance_transform_edt(~bone_mask) * UM_PER_PIXEL
             distances_to_bone = map_coordinates(bone_dist_map, [n_poss[:, 0], n_poss[:, 1]], order=1, mode='nearest')
 
-            # Calculate exact muscle area (µm²) falling into each radial ring bin (excluding non-mask regions)
             muscle_bone_dists = bone_dist_map[muscle_mask]
             muscle_ring_bins = (muscle_bone_dists // RADIAL_BIN_UM) * RADIAL_BIN_UM
             unique_rings, ring_pixel_counts = np.unique(muscle_ring_bins, return_counts=True)
             ring_area_dict = {r: c * PIXEL_AREA_UM2 for r, c in zip(unique_rings, ring_pixel_counts)}
 
-            # B. DV Stripe Distance Map from Bone
             muscle_dv_projections_um = np.dot(muscle_coords - bone_centroid, dv_unit) * UM_PER_PIXEL
             muscle_stripe_bins = (muscle_dv_projections_um // DV_STRIPE_BIN_UM) * DV_STRIPE_BIN_UM
             unique_stripes, stripe_pixel_counts = np.unique(muscle_stripe_bins, return_counts=True)
             stripe_area_dict = {s: c * PIXEL_AREA_UM2 for s, c in zip(unique_stripes, stripe_pixel_counts)}
 
-            # Nuclei DV projections & normalized scores (-1 to +1)
             dv_bone_projections_px = np.dot(n_poss - bone_centroid, dv_unit)
             dv_bone_projections_um = dv_bone_projections_px * UM_PER_PIXEL
 
@@ -205,7 +199,6 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
                 s_bin = int(dv_um // DV_STRIPE_BIN_UM) * DV_STRIPE_BIN_UM
                 image_stripe_counts[s_bin] = image_stripe_counts.get(s_bin, 0) + 1
 
-            # Compute Density for Rings
             for r_bin, count in image_ring_counts.items():
                 mask_area = ring_area_dict.get(r_bin, 0)
                 if mask_area > 0:
@@ -219,7 +212,6 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
                         "pax7_density_um2": density_val
                     })
 
-            # Compute Density for DV Stripes
             for s_bin, count in image_stripe_counts.items():
                 mask_area = stripe_area_dict.get(s_bin, 0)
                 if mask_area > 0:
@@ -234,26 +226,27 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
                     })
 
             # ========================================================
-            # 5. DEBUG VISUALIZATION MAPS FOR EVERY MUSCLE (~500x500)
+            # 5. OPTIONAL DEBUG VISUALIZATION MAPS (~500x500)
             # ========================================================
-            # Generates and saves an overlay image showing the bone, landmarks, and DV axis vector
-            fig, ax = plt.subplots(figsize=(6, 6))
-            ax.imshow(mask_zones, cmap="tab20", alpha=0.6)
-            ax.scatter(bone_centroid[1], bone_centroid[0], color='red', s=50, label="Bone (0)")
-            ax.scatter(g5_centroid[1], g5_centroid[0], color='blue', s=30, label="Dorsal (G5)")
-            ax.scatter(ventral_centroid[1], ventral_centroid[0], color='green', s=30, label="Ventral (8,9,10)")
-            
-            dorsal_tip = bone_centroid + dv_unit * dorsal_span
-            ventral_tip = bone_centroid - dv_unit * ventral_span
-            ax.plot([ventral_tip[1], dorsal_tip[1]], [ventral_tip[0], dorsal_tip[0]], 'k--', lw=2, label="DV Axis")
-            
-            ax.set_title(f"{img_name}\n({age} - {genotype})", fontsize=9)
-            ax.axis('off')
-            ax.legend(loc='upper right', fontsize=8)
-            
-            clean_stem = Path(img_name).stem.replace(" ", "_")
-            fig.savefig(debug_dir / f"debug_spatial_{clean_stem}.png", dpi=80, bbox_inches='tight')
-            plt.close(fig)
+            # Only runs if GENERATE_DEBUG_MAPS is set to True
+            if GENERATE_DEBUG_MAPS:
+                fig, ax = plt.subplots(figsize=(6, 6))
+                ax.imshow(mask_zones, cmap="tab20", alpha=0.6)
+                ax.scatter(bone_centroid[1], bone_centroid[0], color='red', s=50, label="Bone (0)")
+                ax.scatter(g5_centroid[1], g5_centroid[0], color='blue', s=30, label="Dorsal (G5)")
+                ax.scatter(ventral_centroid[1], ventral_centroid[0], color='green', s=30, label="Ventral (8,9,10)")
+                
+                dorsal_tip = bone_centroid + dv_unit * dorsal_span
+                ventral_tip = bone_centroid - dv_unit * ventral_span
+                ax.plot([ventral_tip[1], dorsal_tip[1]], [ventral_tip[0], dorsal_tip[0]], 'k--', lw=2, label="DV Axis")
+                
+                ax.set_title(f"{img_name}\n({age} - {genotype})", fontsize=9)
+                ax.axis('off')
+                ax.legend(loc='upper right', fontsize=8)
+                
+                clean_stem = Path(img_name).stem.replace(" ", "_")
+                fig.savefig(debug_dir / f"debug_spatial_{clean_stem}.png", dpi=80, bbox_inches='tight')
+                plt.close(fig)
 
         except Exception as e:
             print(f"[ERROR] Processing spatial gradients for {img_name}: {e}")
@@ -280,7 +273,6 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
                 continue
 
             plt.figure(figsize=(10, 6))
-            # Individual sample lines (gray, transparent) to show sample support per point
             sns.lineplot(
                 data=df_age_ring,
                 x="ring_order",
@@ -292,7 +284,6 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
                 linewidth=1.0,
                 label="Individual Muscle Sample"
             )
-            # Aggregate mean with shaded standard deviation
             sns.lineplot(
                 data=df_age_ring,
                 x="ring_order",
@@ -326,7 +317,6 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
             df_age_vec = df_age_vec.sort_values("dv_stripe_order")
 
             plt.figure(figsize=(12, 6))
-            # Individual sample curves for full transparency of sample size/support
             sns.lineplot(
                 data=df_age_vec,
                 x="dv_stripe_order",
@@ -338,7 +328,6 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
                 linewidth=1.0,
                 label="Individual Muscle Sample"
             )
-            # Aggregate mean with SD shading
             sns.lineplot(
                 data=df_age_vec,
                 x="dv_stripe_order",
