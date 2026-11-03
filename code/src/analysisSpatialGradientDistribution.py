@@ -245,7 +245,7 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
                     })
 
             # ========================================================
-            # 5. OPTIONAL DEBUG VISUALIZATION MAPS (~500x500 with Stripes)
+            # 5. DEBUG VISUALIZATION MAPS (~500x500 with Full Slices)
             # ========================================================
             if GENERATE_DEBUG_MAPS:
                 fig, ax = plt.subplots(figsize=(6, 6))
@@ -258,15 +258,17 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
                 ventral_tip = bone_centroid - dv_unit * ventral_span
                 ax.plot([ventral_tip[1], dorsal_tip[1]], [ventral_tip[0], dorsal_tip[0]], 'k--', lw=2, label="DV Axis")
                 
-                # Draw perpendicular stripe boundary lines along the DV axis for visual verification
+                # Draw perpendicular stripe boundary slice lines spanning the entire muscle mask width
                 stripe_bin_px = DV_STRIPE_BIN_UM / UM_PER_PIXEL
                 current_offset = -ventral_span
+                perp_vec = np.array([-dv_unit[1], dv_unit[0]])
+                
                 while current_offset <= dorsal_span:
                     stripe_center = bone_centroid + dv_unit * current_offset
-                    perp_vec = np.array([-dv_unit[1], dv_unit[0]])
-                    p1 = stripe_center - perp_vec * 40
-                    p2 = stripe_center + perp_vec * 40
-                    ax.plot([p1[1], p2[1]], [p1[0], p2[0]], color='orange', linestyle='-', alpha=0.4, lw=1)
+                    # Extend slice line wide enough to cover muscle boundaries
+                    p1 = stripe_center - perp_vec * 300
+                    p2 = stripe_center + perp_vec * 300
+                    ax.plot([p1[1], p2[1]], [p1[0], p2[0]], color='cyan', linestyle='-', alpha=0.5, lw=1)
                     current_offset += stripe_bin_px
 
                 ax.set_title(f"{img_name}\n({age} - {genotype})", fontsize=9)
@@ -289,9 +291,9 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
         print(f"  -> Muscle geometry summary saved to: {output_dir / 'muscle_geometry_summary.xlsx'}")
 
     # ========================================================
-    # PLOTTING: CLEAN LINE PLOTS (NO LEGEND, DASHS FOR KIKO, BONE HIGHLIGHT)
+    # PLOTTING: CLEAN LINE PLOTS (GENOTYPE-COLORED INDIVIDUAL LINES)
     # ========================================================
-    print("[STAGE] Generating Clean Density Line Plots with Bone Highlights & Dashed KIKO Lines...")
+    print("[STAGE] Generating Clean Density Line Plots with Genotype-Colored Individual Lines...")
 
     avg_bone_r = df_geom["bone_radius_um"].mean() if not df_geom.empty else 100.0
 
@@ -303,17 +305,22 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
                 continue
 
             plt.figure(figsize=(10, 6))
-            # Individual sample lines (gray, transparent)
-            sns.lineplot(
-                data=df_age_ring,
-                x="ring_order",
-                y="pax7_density_um2",
-                units="image",
-                estimator=None,
-                color="gray",
-                alpha=0.20,
-                linewidth=1.0
-            )
+            
+            # Individual sample lines colored by genotype (Blue for WT, Orange for KIKO)
+            for genotype, color in [("WT", "#2b5c8f"), ("KIKO", "#d95f02")]:
+                df_g = df_age_ring[df_age_ring["genotype"] == genotype]
+                if not df_g.empty:
+                    sns.lineplot(
+                        data=df_g,
+                        x="ring_order",
+                        y="pax7_density_um2",
+                        units="image",
+                        estimator=None,
+                        color=color,
+                        alpha=0.25,
+                        linewidth=1.0
+                    )
+
             # WT Aggregate Mean (Continuous line)
             sns.lineplot(
                 data=df_age_ring[df_age_ring["genotype"] == "WT"],
@@ -357,16 +364,23 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
             df_age_vec = df_age_vec.sort_values("dv_stripe_order")
 
             plt.figure(figsize=(12, 6))
-            sns.lineplot(
-                data=df_age_vec,
-                x="dv_stripe_order",
-                y="pax7_density_um2",
-                units="image",
-                estimator=None,
-                color="gray",
-                alpha=0.20,
-                linewidth=1.0
-            )
+            
+            # Individual sample lines colored by genotype
+            for genotype, color in [("WT", "#2b5c8f"), ("KIKO", "#d95f02")]:
+                df_g = df_age_vec[df_age_vec["genotype"] == genotype]
+                if not df_g.empty:
+                    sns.lineplot(
+                        data=df_g,
+                        x="dv_stripe_order",
+                        y="pax7_density_um2",
+                        units="image",
+                        estimator=None,
+                        color=color,
+                        alpha=0.25,
+                        linewidth=1.0
+                    )
+
+            # WT Aggregate Mean (Continuous line)
             sns.lineplot(
                 data=df_age_vec[df_age_vec["genotype"] == "WT"],
                 x="dv_stripe_order",
@@ -377,6 +391,7 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
                 linestyle='-',
                 marker='o'
             )
+            # KIKO Aggregate Mean (Dashed line)
             sns.lineplot(
                 data=df_age_vec[df_age_vec["genotype"] == "KIKO"],
                 x="dv_stripe_order",
