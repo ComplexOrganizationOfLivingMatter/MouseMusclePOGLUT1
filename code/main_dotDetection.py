@@ -157,6 +157,18 @@ def process_single_image(mask_path: Path, pred_dict: dict, output_mask_root: Pat
             res[f"area g{z} (um2)"] = z_area
             res[f"nuclei/um2 g{z}"] = z_nuclei_count / z_area if z_area > 0 else 0
 
+            # Voronoi cell size statistics (mean & std in um2)
+            voronoi_cells = global_voronoi[z_mask]
+            voronoi_cells = voronoi_cells[voronoi_cells > 0]
+            if voronoi_cells.size > 0:
+                _, territory_sizes = np.unique(voronoi_cells, return_counts=True)
+                cell_areas = territory_sizes * PIXEL_AREA_UM2
+                res[f"voronoi_mean g{z} (um2)"] = float(np.mean(cell_areas))
+                res[f"voronoi_std g{z} (um2)"] = float(np.std(cell_areas))
+            else:
+                res[f"voronoi_mean g{z} (um2)"] = np.nan
+                res[f"voronoi_std g{z} (um2)"] = np.nan
+
         res["total nuclei detected"] = total_nuclei
         res["whole muscle area (um2)"] = total_area
         res["whole muscle nuclei/um2"] = total_nuclei / total_area if total_area > 0 else 0
@@ -220,7 +232,12 @@ if __name__ == "__main__":
     group_cols = [
         col
         for z in VALID_ZONES
-        for col in [f"area g{z} (um2)", f"nuclei/um2 g{z}"]
+        for col in [
+            f"area g{z} (um2)", 
+            f"pax7/um2 g{z}", 
+            f"voronoi_mean g{z} (um2)", 
+            f"voronoi_std g{z} (um2)"
+        ]
         if col in df.columns
     ]
 
