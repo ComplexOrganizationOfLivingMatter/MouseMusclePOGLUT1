@@ -286,11 +286,7 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
     df_vector = pd.DataFrame(density_vector_records)
     df_geom = pd.DataFrame(geometry_records)
 
-    if not df_geom.empty:
-        df_geom.to_excel(output_dir / "muscle_geometry_summary.xlsx", index=False)
-        print(f"  -> Muscle geometry summary saved to: {output_dir / 'muscle_geometry_summary.xlsx'}")
-
-    # ========================================================
+     # ========================================================
     # PLOTTING: CLEAN LINE PLOTS (GENOTYPE-COLORED INDIVIDUAL LINES)
     # ========================================================
     print("[STAGE] Generating Clean Density Line Plots with Genotype-Colored Individual Lines...")
