@@ -150,8 +150,6 @@ def process_single_image(
             
             fibre_masked = fibre_img.copy()
             fibre_masked[~valid_mask] = 0
-            # Pass integer label array directly: preserves touching object boundaries, 
-            # while separating any recycled distant IDs.
             fibre_labeled = measure.label(fibre_masked, connectivity=1)
             fibre_props = measure.regionprops(fibre_labeled)
 
@@ -163,11 +161,7 @@ def process_single_image(
             
             nuclei_masked = nuclei_img.copy()
             nuclei_masked[~valid_mask] = 0
-            
-            # Pass the integer label array directly to measure.label():
-            # - Touching/overlapping nuclei keep their distinct boundaries (different IDs).
-            # - Distant nuclei sharing the same recycled uint16 label ID are safely split 
-            #   into unique components because they are separated spatially.
+            # Integer label pass handles recycled distant IDs while preserving touching boundaries
             nuclei_labeled = measure.label(nuclei_masked, connectivity=1)
             total_nuclei_props = measure.regionprops(nuclei_labeled)
 
@@ -220,27 +214,27 @@ def process_single_image(
             # 1. Muscle Fibres Metrics
             f_areas = zone_fibres[z]
             f_count = len(f_areas)
-            res_fibres[f"area g{z} (um2)"] = z_area
-            res_fibres[f"fibre count g{z}"] = f_count
-            res_fibres[f"fibre density g{z} (fibres/um2)"] = f_count / z_area if z_area > 0 else 0
-            res_fibres[f"fibre mean size g{z} (um2)"] = float(np.mean(f_areas)) if f_count > 0 else 0.0
-            res_fibres[f"fibre std size g{z} (um2)"] = float(np.std(f_areas)) if f_count > 0 else 0.0
+            res_fibres[f"muscle_zone_area g{z} (um2)"] = z_area
+            res_fibres[f"muscle_fibre_count g{z}"] = f_count
+            res_fibres[f"muscle_fibre_density g{z} (fibres/um2)"] = f_count / z_area if z_area > 0 else 0
+            res_fibres[f"muscle_fibre_area_mean g{z} (um2)"] = float(np.mean(f_areas)) if f_count > 0 else 0.0
+            res_fibres[f"muscle_fibre_area_std g{z} (um2)"] = float(np.std(f_areas)) if f_count > 0 else 0.0
 
             # 2. Nuclei Metrics
             n_count = zone_nuclei_count[z]
-            res_nuclei[f"area g{z} (um2)"] = z_area
-            res_nuclei[f"total nuclei count g{z}"] = n_count
-            res_nuclei[f"nuclei density g{z} (nuclei/um2)"] = n_count / z_area if z_area > 0 else 0
-            res_nuclei[f"nuclei per fibre g{z}"] = n_count / f_count if f_count > 0 else 0.0
+            res_nuclei[f"muscle_zone_area g{z} (um2)"] = z_area
+            res_nuclei[f"total_nuclei_count g{z}"] = n_count
+            res_nuclei[f"total_nuclei_density g{z} (nuclei/um2)"] = n_count / z_area if z_area > 0 else 0
+            res_nuclei[f"total_nuclei_per_muscle_fibre g{z}"] = n_count / f_count if f_count > 0 else 0.0
 
             # 3. Pax7 Features Metrics
             pax7_count = zone_pax7[z]
             tot_pax7 += pax7_count
-            res_pax7[f"area g{z} (um2)"] = z_area
-            res_pax7[f"pax7 count g{z}"] = pax7_count
-            res_pax7[f"pax7 density g{z} (pax7/um2)"] = pax7_count / z_area if z_area > 0 else 0
-            res_pax7[f"pax7 per fibre g{z}"] = pax7_count / f_count if f_count > 0 else 0.0
-            res_pax7[f"pax7 per nuclei g{z}"] = pax7_count / n_count if n_count > 0 else 0.0
+            res_pax7[f"muscle_zone_area g{z} (um2)"] = z_area
+            res_pax7[f"pax7_cell_count g{z}"] = pax7_count
+            res_pax7[f"pax7_cell_density g{z} (pax7_cells/um2)"] = pax7_count / z_area if z_area > 0 else 0
+            res_pax7[f"pax7_per_muscle_fibre g{z}"] = pax7_count / f_count if f_count > 0 else 0.0
+            res_pax7[f"pax7_per_total_nucleus g{z}"] = pax7_count / n_count if n_count > 0 else 0.0
 
             # Voronoi cell size statistics for Pax7
             voronoi_cells = global_voronoi[z_mask]
@@ -248,31 +242,31 @@ def process_single_image(
             if voronoi_cells.size > 0:
                 _, territory_sizes = np.unique(voronoi_cells, return_counts=True)
                 cell_areas = territory_sizes * PIXEL_AREA_UM2
-                res_pax7[f"voronoi_mean g{z} (um2)"] = float(np.mean(cell_areas))
-                res_pax7[f"voronoi_std g{z} (um2)"] = float(np.std(cell_areas))
+                res_pax7[f"voronoi_cell_area_mean g{z} (um2)"] = float(np.mean(cell_areas))
+                res_pax7[f"voronoi_cell_area_std g{z} (um2)"] = float(np.std(cell_areas))
             else:
-                res_pax7[f"voronoi_mean g{z} (um2)"] = np.nan
-                res_pax7[f"voronoi_std g{z} (um2)"] = np.nan
+                res_pax7[f"voronoi_cell_area_mean g{z} (um2)"] = np.nan
+                res_pax7[f"voronoi_cell_area_std g{z} (um2)"] = np.nan
 
         # Whole muscle summary values
         all_fibre_areas = [area for areas in zone_fibres.values() for area in areas]
         
-        res_fibres["total muscle fibres"] = tot_fibres
-        res_fibres["whole muscle area (um2)"] = tot_area
-        res_fibres["whole muscle fibre density"] = tot_fibres / tot_area if tot_area > 0 else 0
-        res_fibres["whole muscle fibre mean size (um2)"] = float(np.mean(all_fibre_areas)) if all_fibre_areas else 0.0
-        res_fibres["whole muscle fibre std size (um2)"] = float(np.std(all_fibre_areas)) if all_fibre_areas else 0.0
+        res_fibres["total_muscle_fibres"] = tot_fibres
+        res_fibres["whole_muscle_area (um2)"] = tot_area
+        res_fibres["whole_muscle_fibre_density (fibres/um2)"] = tot_fibres / tot_area if tot_area > 0 else 0
+        res_fibres["whole_muscle_fibre_area_mean (um2)"] = float(np.mean(all_fibre_areas)) if all_fibre_areas else 0.0
+        res_fibres["whole_muscle_fibre_area_std (um2)"] = float(np.std(all_fibre_areas)) if all_fibre_areas else 0.0
 
-        res_nuclei["total nuclei count"] = tot_total_nuclei
-        res_nuclei["whole muscle area (um2)"] = tot_area
-        res_nuclei["whole muscle nuclei density (nuclei/um2)"] = tot_total_nuclei / tot_area if tot_area > 0 else 0
-        res_nuclei["whole muscle nuclei per fibre"] = tot_total_nuclei / tot_fibres if tot_fibres > 0 else 0.0
+        res_nuclei["total_nuclei_count"] = tot_total_nuclei
+        res_nuclei["whole_muscle_area (um2)"] = tot_area
+        res_nuclei["whole_muscle_nuclei_density (nuclei/um2)"] = tot_total_nuclei / tot_area if tot_area > 0 else 0
+        res_nuclei["whole_muscle_nuclei_per_muscle_fibre"] = tot_total_nuclei / tot_fibres if tot_fibres > 0 else 0.0
 
-        res_pax7["total pax7 detected"] = tot_pax7
-        res_pax7["whole muscle area (um2)"] = tot_area
-        res_pax7["whole muscle pax7 density (pax7/um2)"] = tot_pax7 / tot_area if tot_area > 0 else 0
-        res_pax7["whole muscle pax7 per fibre"] = tot_pax7 / tot_fibres if tot_fibres > 0 else 0.0
-        res_pax7["whole muscle pax7 per nuclei"] = tot_pax7 / tot_total_nuclei if tot_total_nuclei > 0 else 0.0
+        res_pax7["total_pax7_cells_detected"] = tot_pax7
+        res_pax7["whole_muscle_area (um2)"] = tot_area
+        res_pax7["whole_muscle_pax7_density (pax7_cells/um2)"] = tot_pax7 / tot_area if tot_area > 0 else 0
+        res_pax7["whole_muscle_pax7_per_muscle_fibre"] = tot_pax7 / tot_fibres if tot_fibres > 0 else 0.0
+        res_pax7["whole_muscle_pax7_per_total_nucleus"] = tot_pax7 / tot_total_nuclei if tot_total_nuclei > 0 else 0.0
 
         return {"pax7": res_pax7, "fibres": res_fibres, "nuclei": res_nuclei}
 
@@ -306,7 +300,7 @@ if __name__ == "__main__":
     VOR_ROOT.mkdir(parents=True, exist_ok=True)
 
     print("\n" + "=" * 60)
-    print("STARTING MULTI-FEATURE PIPELINE (TOUCHING NUCLEI PRESERVED & RECYCLED IDs SPLIT)")
+    print("STARTING MULTI-FEATURE PIPELINE (INTUITIVE FEATURE NAMES)")
     print(f"Muscle masks found: {len(PATH_MASKS)}")
     print(f"BiaPy predictions found: {len(PATH_PREDS)}")
     print(f"Muscle fibre segmentations found: {len(PATH_FIBRES)}")
@@ -361,20 +355,56 @@ if __name__ == "__main__":
 
     df_pax7 = reorder_df(
         df_pax7,
-        ["image", "age", "genotype", "total pax7 detected", "whole muscle area (um2)", "whole muscle pax7 density (pax7/um2)", "whole muscle pax7 per fibre", "whole muscle pax7 per nuclei"],
-        ["area g{z} (um2)", "pax7 count g{z}", "pax7 density g{z} (pax7/um2)", "pax7 per fibre g{z}", "pax7 per nuclei g{z}", "voronoi_mean g{z} (um2)", "voronoi_std g{z} (um2)"]
+        [
+            "image", "age", "genotype", 
+            "total_pax7_cells_detected", "whole_muscle_area (um2)", 
+            "whole_muscle_pax7_density (pax7_cells/um2)", 
+            "whole_muscle_pax7_per_muscle_fibre", 
+            "whole_muscle_pax7_per_total_nucleus"
+        ],
+        [
+            "muscle_zone_area g{z} (um2)", 
+            "pax7_cell_count g{z}", 
+            "pax7_cell_density g{z} (pax7_cells/um2)", 
+            "pax7_per_muscle_fibre g{z}", 
+            "pax7_per_total_nucleus g{z}", 
+            "voronoi_cell_area_mean g{z} (um2)", 
+            "voronoi_cell_area_std g{z} (um2)"
+        ]
     )
 
     df_fibres = reorder_df(
         df_fibres,
-        ["image", "age", "genotype", "total muscle fibres", "whole muscle area (um2)", "whole muscle fibre density", "whole muscle fibre mean size (um2)", "whole muscle fibre std size (um2)"],
-        ["area g{z} (um2)", "fibre count g{z}", "fibre density g{z} (fibres/um2)", "fibre mean size g{z} (um2)", "fibre std size g{z} (um2)"]
+        [
+            "image", "age", "genotype", 
+            "total_muscle_fibres", "whole_muscle_area (um2)", 
+            "whole_muscle_fibre_density (fibres/um2)", 
+            "whole_muscle_fibre_area_mean (um2)", 
+            "whole_muscle_fibre_area_std (um2)"
+        ],
+        [
+            "muscle_zone_area g{z} (um2)", 
+            "muscle_fibre_count g{z}", 
+            "muscle_fibre_density g{z} (fibres/um2)", 
+            "muscle_fibre_area_mean g{z} (um2)", 
+            "muscle_fibre_area_std g{z} (um2)"
+        ]
     )
 
     df_nuclei = reorder_df(
         df_nuclei,
-        ["image", "age", "genotype", "total nuclei count", "whole muscle area (um2)", "whole muscle nuclei density (nuclei/um2)", "whole muscle nuclei per fibre"],
-        ["area g{z} (um2)", "total nuclei count g{z}", "nuclei density g{z} (nuclei/um2)", "nuclei per fibre g{z}"]
+        [
+            "image", "age", "genotype", 
+            "total_nuclei_count", "whole_muscle_area (um2)", 
+            "whole_muscle_nuclei_density (nuclei/um2)", 
+            "whole_muscle_nuclei_per_muscle_fibre"
+        ],
+        [
+            "muscle_zone_area g{z} (um2)", 
+            "total_nuclei_count g{z}", 
+            "total_nuclei_density g{z} (nuclei/um2)", 
+            "total_nuclei_per_muscle_fibre g{z}"
+        ]
     )
 
     # ========================================================
