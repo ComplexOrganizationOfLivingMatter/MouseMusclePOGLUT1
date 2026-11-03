@@ -223,9 +223,9 @@ def process_single_image(
             # 2. Nuclei Metrics
             n_count = zone_nuclei_count[z]
             res_nuclei[f"muscle_zone_area g{z} (um2)"] = z_area
-            res_nuclei[f"total_nuclei_count g{z}"] = n_count
-            res_nuclei[f"total_nuclei_density g{z} (nuclei/um2)"] = n_count / z_area if z_area > 0 else 0
-            res_nuclei[f"total_nuclei_per_muscle_fibre g{z}"] = n_count / f_count if f_count > 0 else 0.0
+            res_nuclei[f"nuclei_count g{z}"] = n_count
+            res_nuclei[f"nuclei_density g{z} (nuclei/um2)"] = n_count / z_area if z_area > 0 else 0
+            res_nuclei[f"_nuclei_per_muscle_fibre g{z}"] = n_count / f_count if f_count > 0 else 0.0
 
             # 3. Pax7 Features Metrics
             pax7_count = zone_pax7[z]
@@ -234,7 +234,7 @@ def process_single_image(
             res_pax7[f"pax7_cell_count g{z}"] = pax7_count
             res_pax7[f"pax7_cell_density g{z} (pax7_cells/um2)"] = pax7_count / z_area if z_area > 0 else 0
             res_pax7[f"pax7_per_muscle_fibre g{z}"] = pax7_count / f_count if f_count > 0 else 0.0
-            res_pax7[f"pax7_per_total_nucleus g{z}"] = pax7_count / n_count if n_count > 0 else 0.0
+            res_pax7[f"pax7_per_nuclei g{z}"] = pax7_count / n_count if n_count > 0 else 0.0
 
             # Voronoi cell size statistics for Pax7
             voronoi_cells = global_voronoi[z_mask]
@@ -266,7 +266,7 @@ def process_single_image(
         res_pax7["whole_muscle_area (um2)"] = tot_area
         res_pax7["whole_muscle_pax7_density (pax7_cells/um2)"] = tot_pax7 / tot_area if tot_area > 0 else 0
         res_pax7["whole_muscle_pax7_per_muscle_fibre"] = tot_pax7 / tot_fibres if tot_fibres > 0 else 0.0
-        res_pax7["whole_muscle_pax7_per_total_nucleus"] = tot_pax7 / tot_total_nuclei if tot_total_nuclei > 0 else 0.0
+        res_pax7["whole_muscle_pax7_per_total_nuclei"] = tot_pax7 / tot_total_nuclei if tot_total_nuclei > 0 else 0.0
 
         return {"pax7": res_pax7, "fibres": res_fibres, "nuclei": res_nuclei}
 
@@ -360,14 +360,14 @@ if __name__ == "__main__":
             "total_pax7_cells_detected", "whole_muscle_area (um2)", 
             "whole_muscle_pax7_density (pax7_cells/um2)", 
             "whole_muscle_pax7_per_muscle_fibre", 
-            "whole_muscle_pax7_per_total_nucleus"
+            "whole_muscle_pax7_per_nuclei"
         ],
         [
             "muscle_zone_area g{z} (um2)", 
             "pax7_cell_count g{z}", 
             "pax7_cell_density g{z} (pax7_cells/um2)", 
             "pax7_per_muscle_fibre g{z}", 
-            "pax7_per_total_nucleus g{z}", 
+            "pax7_per_nuclei g{z}", 
             "voronoi_cell_area_mean g{z} (um2)", 
             "voronoi_cell_area_std g{z} (um2)"
         ]
@@ -401,9 +401,9 @@ if __name__ == "__main__":
         ],
         [
             "muscle_zone_area g{z} (um2)", 
-            "total_nuclei_count g{z}", 
-            "total_nuclei_density g{z} (nuclei/um2)", 
-            "total_nuclei_per_muscle_fibre g{z}"
+            "nuclei_count g{z}", 
+            "nuclei_density g{z} (nuclei/um2)", 
+            "nuclei_per_muscle_fibre g{z}"
         ]
     )
 
