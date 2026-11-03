@@ -35,7 +35,8 @@ RADIAL_BIN_UM = 200       # Radial rings width outwards from bone
 DV_STRIPE_BIN_UM = 200    # DV parallel stripes width from ventral to dorsal
 
 # --- OPTIONAL TOGGLE ---
-GENERATE_DEBUG_MAPS = False
+# Set to True to generate ~500x500 debug overlay maps showing DV axis & stripe bins
+GENERATE_DEBUG_MAPS = True
 
 # Set plotting style
 sns.set_theme(style="whitegrid")
@@ -58,7 +59,7 @@ def load_latest_excel_report(result_dir: Path) -> pd.DataFrame:
 def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: Path, output_dir: Path):
     """
     Computes spatial distributions, muscle geometry, and true mask-restricted densities 
-    (Pax7 count / muscle area in µm²), strictly excluding the bone region.
+    (Pax7 count / muscle area in µm²), strictly excluding the bone region and group 13.
     """
     print("\n[STAGE] Analyzing Radial Rings, Bone-Centered DV Axes, and Mask-Restricted Densities...")
     
@@ -114,7 +115,8 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
             bone_diameters = [p.equivalent_diameter for p in measure.regionprops(bone_mask.astype(int))]
             bone_radius_um = (max(bone_diameters) * UM_PER_PIXEL / 2.0) if bone_diameters else 100.0
 
-            muscle_mask = (mask_zones > 0) & (mask_zones != BONE_ZONE)
+            # Define valid muscle tissue mask: Exclude Bone (6) AND Group 13
+            muscle_mask = (mask_zones > 0) & (mask_zones != BONE_ZONE) & (mask_zones != 13)
             muscle_coords = np.argwhere(muscle_mask)
             if len(muscle_coords) == 0:
                 continue
@@ -127,19 +129,20 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
             else:
                 major_axis_um, minor_axis_um = np.nan, np.nan
 
-            g5_mask = (mask_zones == 5)
+            # Locate Dorsal Landmark (using combined Groups 3 and 5) & Ventral Landmark (Groups 8, 9, 10)
+            dorsal_mask = np.isin(mask_zones, [3, 5])
             ventral_mask = np.isin(mask_zones, [8, 9, 10])
 
-            if not np.any(g5_mask) or not np.any(ventral_mask):
+            if not np.any(dorsal_mask) or not np.any(ventral_mask):
                 continue
 
-            g5_centroid = np.argwhere(g5_mask).mean(axis=0)
+            dorsal_centroid = np.argwhere(dorsal_mask).mean(axis=0)
             ventral_centroid = np.argwhere(ventral_mask).mean(axis=0)
 
             # ========================================================
             # 2. DORSO-VENTRAL (DV) AXIS VECTOR & PROJECTIONS
             # ========================================================
-            dv_vector = g5_centroid - ventral_centroid
+            dv_vector = dorsal_centroid - ventral_centroid
             dv_length = np.linalg.norm(dv_vector)
             if dv_length == 0:
                 continue
@@ -177,7 +180,15 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
             bone_dist_map = distance_transform_edt(~bone_mask) * UM_PER_PIXEL
             distances_to_bone = map_coordinates(bone_dist_map, [n_poss[:, 0], n_poss[:, 1]], order=1, mode='nearest')
 
-            valid_nucleus_mask = (mask_zones[tuple(n_poss.astype(int).T)] != BONE_ZONE) if len(n_poss) > 0 else []
+            # Exclude nuclei located in Bone (6) or Group 13
+            n_ints = n_poss.astype(int)
+            h, w = mask_zones.shape
+            valid_nucleus_mask = np.zeros(len(n_poss), dtype=bool)
+            for i, (ny, nx) in enumerate(n_ints):
+                if 0 <= ny < h and 0 <= nx < w:
+                    zone_val = mask_zones[ny, nx]
+                    if zone_val != BONE_ZONE and zone_val != 13:
+                        valid_nucleus_mask[i] = True
             
             muscle_bone_dists = bone_dist_map[muscle_mask]
             muscle_ring_bins = (muscle_bone_dists // RADIAL_BIN_UM) * RADIAL_BIN_UM
@@ -234,24 +245,35 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
                     })
 
             # ========================================================
-            # 5. OPTIONAL DEBUG VISUALIZATION MAPS (~500x500)
+            # 5. OPTIONAL DEBUG VISUALIZATION MAPS (~500x500 with Stripes)
             # ========================================================
             if GENERATE_DEBUG_MAPS:
                 fig, ax = plt.subplots(figsize=(6, 6))
                 ax.imshow(mask_zones, cmap="tab20", alpha=0.6)
                 ax.scatter(bone_centroid[1], bone_centroid[0], color='red', s=50, label="Bone (0)")
-                ax.scatter(g5_centroid[1], g5_centroid[0], color='blue', s=30, label="Dorsal (G5)")
+                ax.scatter(dorsal_centroid[1], dorsal_centroid[0], color='blue', s=30, label="Dorsal (3,5)")
                 ax.scatter(ventral_centroid[1], ventral_centroid[0], color='green', s=30, label="Ventral (8,9,10)")
                 
                 dorsal_tip = bone_centroid + dv_unit * dorsal_span
                 ventral_tip = bone_centroid - dv_unit * ventral_span
                 ax.plot([ventral_tip[1], dorsal_tip[1]], [ventral_tip[0], dorsal_tip[0]], 'k--', lw=2, label="DV Axis")
                 
+                # Draw perpendicular stripe boundary lines along the DV axis for visual verification
+                stripe_bin_px = DV_STRIPE_BIN_UM / UM_PER_PIXEL
+                current_offset = -ventral_span
+                while current_offset <= dorsal_span:
+                    stripe_center = bone_centroid + dv_unit * current_offset
+                    perp_vec = np.array([-dv_unit[1], dv_unit[0]])
+                    p1 = stripe_center - perp_vec * 40
+                    p2 = stripe_center + perp_vec * 40
+                    ax.plot([p1[1], p2[1]], [p1[0], p2[0]], color='orange', linestyle='-', alpha=0.4, lw=1)
+                    current_offset += stripe_bin_px
+
                 ax.set_title(f"{img_name}\n({age} - {genotype})", fontsize=9)
                 ax.axis('off')
                 
                 clean_stem = Path(img_name).stem.replace(" ", "_")
-                fig.savefig(debug_dir / f"debug_spatial_{clean_stem}.png", dpi=80, bbox_inches='tight')
+                fig.savefig(debug_dir / f"debug_spatial_stripes_{clean_stem}.png", dpi=80, bbox_inches='tight')
                 plt.close(fig)
 
         except Exception as e:
@@ -321,7 +343,6 @@ def analyze_spatial_distributions(df: pd.DataFrame, mask_root: Path, vor_root: P
             plt.ylabel(r"Pax7 Density ($\mu m^{-2}$)", fontweight="bold")
             plt.tight_layout()
 
-            # Sanitize age string to avoid invalid Windows path arguments
             safe_age = "".join(c for c in str(age) if c.isalnum() or c in ('_', '-')).strip()
             plt.savefig(plot_dir / f"radial_rings_density_line_{safe_age}.png", dpi=300)
             plt.close()
