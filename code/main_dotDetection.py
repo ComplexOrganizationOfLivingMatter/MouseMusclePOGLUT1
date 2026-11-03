@@ -9,7 +9,6 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from datetime import datetime
-from scipy.stats import entropy
 from scipy.ndimage import distance_transform_edt
 from skimage import io, measure
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -53,12 +52,10 @@ def process_single_image(mask_path: Path, pred_dict: dict, output_mask_root: Pat
         pred_h, pred_w = img_pred.shape
 
         mask_zones = load_single_channel(mask_path)
-        mask_h, mask_w = mask_zones.shape
 
         # --- Dimension Check & Nearest Neighbor Transformation for Mask ---
         if mask_zones.shape != (pred_h, pred_w):
             print(f"[INFO] Dimension mismatch for {img_name}: Mask {mask_zones.shape} vs Prediction {(pred_h, pred_w)}. Resizing mask using nearest neighbor.")
-            # Resize mask zones to match prediction dimensions using nearest neighbor to preserve zone IDs
             mask_zones = cv2.resize(mask_zones, (pred_w, pred_h), interpolation=cv2.INTER_NEAREST)
 
         h, w = mask_zones.shape
@@ -87,10 +84,6 @@ def process_single_image(mask_path: Path, pred_dict: dict, output_mask_root: Pat
             raw_mask[np.isin(mask_zones, list(EXCLUDED_ZONES))] = 0
             final_nuclei_mask = measure.label(raw_mask > 0, connectivity=1).astype(np.uint32)
 
-            # Save binary nuclei mask
-            tifffile.imwrite(
-                str(mask_file_path), (final_nuclei_mask > 0).astype(np.uint8) * 255
-            )
             # Save binary nuclei mask
             tifffile.imwrite(
                 str(mask_file_path), (final_nuclei_mask > 0).astype(np.uint8) * 255
@@ -164,21 +157,6 @@ def process_single_image(mask_path: Path, pred_dict: dict, output_mask_root: Pat
             res[f"area g{z} (um2)"] = z_area
             res[f"nuclei/um2 g{z}"] = z_nuclei_count / z_area if z_area > 0 else 0
 
-            # Shannon entropy calculation
-            voronoi_cells = global_voronoi[z_mask]
-            voronoi_cells = voronoi_cells[voronoi_cells > 0]
-            _, territory_sizes = np.unique(voronoi_cells, return_counts=True)
-            S = len(territory_sizes)
-
-            if S >= 3:
-                probs = territory_sizes / np.sum(territory_sizes)
-                raw_ent = entropy(probs)
-                res[f"entropy g{z}"] = raw_ent
-                res[f"normalized_entropy g{z}"] = np.clip(raw_ent / np.log(S), 0, 1)
-            else:
-                res[f"entropy g{z}"] = np.nan
-                res[f"normalized_entropy g{z}"] = np.nan
-
         res["total nuclei detected"] = total_nuclei
         res["whole muscle area (um2)"] = total_area
         res["whole muscle nuclei/um2"] = total_nuclei / total_area if total_area > 0 else 0
@@ -197,7 +175,6 @@ if __name__ == "__main__":
     BASE_DIR = Path("..")
     PATH_MASKS = list((BASE_DIR / "data" / "annotatedMuscleMasks").rglob("*.tif"))
     PATH_PREDS = list((BASE_DIR / "data" / "predictions" / "all_largeModel_detection" / "per_image_local_max_check_post_processing").rglob("*.tif"))
-    # Map prediction paths to filenames for O(1) lookups
     PRED_DICT = {p.name: p for p in PATH_PREDS}
 
     RESULT_DIR = BASE_DIR / "results" / "largeModel_dotDetection"
@@ -243,7 +220,7 @@ if __name__ == "__main__":
     group_cols = [
         col
         for z in VALID_ZONES
-        for col in [f"area g{z} (um2)", f"nuclei/um2 g{z}", f"normalized_entropy g{z}"]
+        for col in [f"area g{z} (um2)", f"nuclei/um2 g{z}"]
         if col in df.columns
     ]
 
@@ -254,14 +231,12 @@ if __name__ == "__main__":
     # ========================================================
     print("[STAGE] Generating summary statistics...")
 
-    # Filter for numeric columns so aggregation ignores string columns (e.g. 'image')
     numeric_cols = df.select_dtypes(include="number").columns
 
     summary_final = df.groupby(["genotype", "age"], sort=False)[numeric_cols].agg(
         ["mean", "std"]
     )
 
-    # Flatten MultiIndex columns (e.g., ('area g1', 'mean') -> 'area g1_mean')
     summary_final.columns = [f"{col}_{stat}" for col, stat in summary_final.columns]
 
     # ========================================================
@@ -271,9 +246,7 @@ if __name__ == "__main__":
     output_path = RESULT_DIR / f"Pax7_DotDetection_Analysis_{timestamp}.xlsx"
 
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
-        # Raw data sheet
         df.to_excel(writer, sheet_name="Raw_Data", index=False)
-        # Summary statistics sheet
         summary_final.to_excel(writer, sheet_name="Summary_Stats")
 
     # ========================================================
