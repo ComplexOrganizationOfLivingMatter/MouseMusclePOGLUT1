@@ -161,7 +161,6 @@ def process_single_image(
             
             nuclei_masked = nuclei_img.copy()
             nuclei_masked[~valid_mask] = 0
-            # Integer label pass handles recycled distant IDs while preserving touching boundaries
             nuclei_labeled = measure.label(nuclei_masked, connectivity=1)
             total_nuclei_props = measure.regionprops(nuclei_labeled)
 
@@ -217,15 +216,18 @@ def process_single_image(
             res_fibres[f"muscle_zone_area g{z} (um2)"] = z_area
             res_fibres[f"muscle_fibre_count g{z}"] = f_count
             res_fibres[f"muscle_fibre_density g{z} (fibres/um2)"] = f_count / z_area if z_area > 0 else 0
-            res_fibres[f"muscle_fibre_area_mean g{z} (um2)"] = float(np.mean(f_areas)) if f_count > 0 else 0.0
-            res_fibres[f"muscle_fibre_area_std g{z} (um2)"] = float(np.std(f_areas)) if f_count > 0 else 0.0
+            
+            f_mean = float(np.mean(f_areas)) if f_count > 0 else 0.0
+            f_std = float(np.std(f_areas)) if f_count > 0 else 0.0
+            res_fibres[f"muscle_fibre_area_mean g{z} (um2)"] = f_mean
+            res_fibres[f"muscle_fibre_area_cv g{z}"] = (f_std / f_mean) if f_mean > 0 else 0.0
 
             # 2. Nuclei Metrics
             n_count = zone_nuclei_count[z]
             res_nuclei[f"muscle_zone_area g{z} (um2)"] = z_area
             res_nuclei[f"nuclei_count g{z}"] = n_count
             res_nuclei[f"nuclei_density g{z} (nuclei/um2)"] = n_count / z_area if z_area > 0 else 0
-            res_nuclei[f"_nuclei_per_muscle_fibre g{z}"] = n_count / f_count if f_count > 0 else 0.0
+            res_nuclei[f"nuclei_per_muscle_fibre g{z}"] = n_count / f_count if f_count > 0 else 0.0
 
             # 3. Pax7 Features Metrics
             pax7_count = zone_pax7[z]
@@ -242,11 +244,13 @@ def process_single_image(
             if voronoi_cells.size > 0:
                 _, territory_sizes = np.unique(voronoi_cells, return_counts=True)
                 cell_areas = territory_sizes * PIXEL_AREA_UM2
-                res_pax7[f"voronoi_cell_area_mean g{z} (um2)"] = float(np.mean(cell_areas))
-                res_pax7[f"voronoi_cell_area_std g{z} (um2)"] = float(np.std(cell_areas))
+                v_mean = float(np.mean(cell_areas))
+                v_std = float(np.std(cell_areas))
+                res_pax7[f"voronoi_cell_area_mean g{z} (um2)"] = v_mean
+                res_pax7[f"voronoi_cell_area_cv g{z}"] = (v_std / v_mean) if v_mean > 0 else 0.0
             else:
                 res_pax7[f"voronoi_cell_area_mean g{z} (um2)"] = np.nan
-                res_pax7[f"voronoi_cell_area_std g{z} (um2)"] = np.nan
+                res_pax7[f"voronoi_cell_area_cv g{z}"] = np.nan
 
         # Whole muscle summary values
         all_fibre_areas = [area for areas in zone_fibres.values() for area in areas]
@@ -254,8 +258,11 @@ def process_single_image(
         res_fibres["total_muscle_fibres"] = tot_fibres
         res_fibres["whole_muscle_area (um2)"] = tot_area
         res_fibres["whole_muscle_fibre_density (fibres/um2)"] = tot_fibres / tot_area if tot_area > 0 else 0
-        res_fibres["whole_muscle_fibre_area_mean (um2)"] = float(np.mean(all_fibre_areas)) if all_fibre_areas else 0.0
-        res_fibres["whole_muscle_fibre_area_std (um2)"] = float(np.std(all_fibre_areas)) if all_fibre_areas else 0.0
+        
+        whole_f_mean = float(np.mean(all_fibre_areas)) if all_fibre_areas else 0.0
+        whole_f_std = float(np.std(all_fibre_areas)) if all_fibre_areas else 0.0
+        res_fibres["whole_muscle_fibre_area_mean (um2)"] = whole_f_mean
+        res_fibres["whole_muscle_fibre_area_cv"] = (whole_f_std / whole_f_mean) if whole_f_mean > 0 else 0.0
 
         res_nuclei["total_nuclei_count"] = tot_total_nuclei
         res_nuclei["whole_muscle_area (um2)"] = tot_area
@@ -369,7 +376,7 @@ if __name__ == "__main__":
             "pax7_per_muscle_fibre g{z}", 
             "pax7_per_nuclei g{z}", 
             "voronoi_cell_area_mean g{z} (um2)", 
-            "voronoi_cell_area_std g{z} (um2)"
+            "voronoi_cell_area_cv g{z}"
         ]
     )
 
@@ -380,14 +387,14 @@ if __name__ == "__main__":
             "total_muscle_fibres", "whole_muscle_area (um2)", 
             "whole_muscle_fibre_density (fibres/um2)", 
             "whole_muscle_fibre_area_mean (um2)", 
-            "whole_muscle_fibre_area_std (um2)"
+            "whole_muscle_fibre_area_cv"
         ],
         [
             "muscle_zone_area g{z} (um2)", 
             "muscle_fibre_count g{z}", 
             "muscle_fibre_density g{z} (fibres/um2)", 
             "muscle_fibre_area_mean g{z} (um2)", 
-            "muscle_fibre_area_std g{z} (um2)"
+            "muscle_fibre_area_cv g{z}"
         ]
     )
 
