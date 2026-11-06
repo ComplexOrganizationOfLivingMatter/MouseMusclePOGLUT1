@@ -276,6 +276,7 @@ def process_heatmap_set_sequential(
             dpi=dpi,
         )
         plt.close(fig)
+        plt.close('all')
         total_processed += 1
         gc.collect()
 
@@ -286,7 +287,7 @@ def process_heatmap_set_sequential(
 
 
 # =========================================================
-# MONTAGE GENERATION
+# MONTAGE GENERATION (WITH EXPLICIT MEMORY CLEANUP)
 # =========================================================
 def create_comparison_montage(age, heatmap_subfolder: Path, title_suffix: str):
   age_folder = heatmap_subfolder / age
@@ -348,16 +349,19 @@ def create_comparison_montage(age, heatmap_subfolder: Path, title_suffix: str):
       transparent=False,
       dpi=150,
   )
+  
+  # Explicitly clear memory and figures to prevent cumulative leaks
   plt.close(fig)
+  plt.close('all')
   gc.collect()
-  log_step(f"Successfully saved montage: {output_filename}")
+  log_step(f"Successfully saved and cleared montage: {output_filename}")
 
 
 # =========================================================
 # EXECUTION (CELLPOSE FIRST, THEN VORONOI)
 # =========================================================
 if __name__ == "__main__":
-  log_step("=== WORKFLOW INITIALIZED (SEQUENTIAL & TRACED MODE) ===")
+  log_step("=== WORKFLOW INITIALIZED (SEQUENTIAL & MEMORY-SAFE MODE) ===")
 
   # 1. Compute Cellpose WT Baselines & Process Heatmaps
   log_step("--- PROCESSING CELLPOSE ---")
@@ -379,10 +383,13 @@ if __name__ == "__main__":
       label_type="Voronoi",
   )
 
-  # 3. Generate Montages for both sets across all ages
+  # 3. Generate Montages for both sets across all ages with complete memory flushing
   log_step("Starting Montage Compilation Phase...")
+
   for age in AGES:
+    log_step(f"Compiling Cellpose montages for age {age}...")
     create_comparison_montage(age, HEATMAPS_CELLPOSE_DIR, "Cellpose")
+    log_step(f"Compiling Voronoi montages for age {age}...")
     create_comparison_montage(age, HEATMAPS_VORONOI_DIR, "Voronoi")
 
   log_step("=== WORKFLOW FINISHED SUCCESSFULLY ===")
