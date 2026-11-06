@@ -45,6 +45,12 @@ def load_latest_excel_report(result_dir: Path) -> dict[str, pd.DataFrame]:
     return {sheet_name: pd.read_excel(xls, sheet_name=sheet_name) for sheet_name in xls.sheet_names}
 
 
+def extract_age_number(age_str) -> int:
+    """Extracts integer value from age string (e.g., 'p0' -> 0, 'P35' -> 35)."""
+    match = re.search(r'(\d+)', str(age_str))
+    return int(match.group(1)) if match else 0
+
+
 # ============================================================
 # OUTLIER DETECTION & FILTERING HELPER (Mean ± 2*SD)
 # ============================================================
@@ -103,7 +109,8 @@ def generate_feature_plots(
 ) -> list:
     """
     Melts wide per-group columns for a specific feature, cleans up muscle group labels,
-    filters outliers (Mean ± 2*SD), and generates shared and independent Y-axis plots.
+    filters outliers (Mean ± 2*SD), computes the shared Y-axis limit strictly from P0-P20,
+    and generates plots for all ages (including P35).
     """
     feature_cols = [c for c in df_raw.columns if c.startswith(feature_prefix)]
     if not feature_cols:
@@ -132,7 +139,11 @@ def generate_feature_plots(
 
     filtered_df, outlier_records = filter_and_log_outliers(melted_df, "value", subfolder_name)
 
-    global_max = filtered_df["value"].max()
+    # Calculate shared Y-axis limit strictly using ages P0 to P20 (<= 20)
+    df_for_shared_ymax = filtered_df[filtered_df["age"].apply(extract_age_number) <= 20]
+    global_max = df_for_shared_ymax["value"].max()
+    if np.isnan(global_max) or global_max == 0:
+        global_max = filtered_df["value"].max()
     if np.isnan(global_max) or global_max == 0:
         global_max = 1.0
     shared_y_limit = global_max * 1.15
@@ -144,6 +155,7 @@ def generate_feature_plots(
     shared_dir.mkdir(parents=True, exist_ok=True)
     independent_dir.mkdir(parents=True, exist_ok=True)
 
+    # Include all available ages (including P35) for generating plots
     ages = filtered_df["age"].unique()
 
     for age in ages:
@@ -179,7 +191,7 @@ def generate_feature_plots(
                 hue_order=GENOTYPE_ORDER, palette=GENOTYPE_DOT_PALETTE, dodge=True, jitter=0.2, size=6, linewidth=0.8, edgecolor="black"
             )
             plt.ylim(0, shared_y_limit)
-            plt.title(f"{metric_label} per Muscle Group (Shared Scale, Mean±2SD Filtered) — Age: {age}", fontsize=13, fontweight="bold", pad=15)
+            plt.title(f"{metric_label} per Muscle Group (Shared Scale P0-P20 Limit, Mean±2SD Filtered) — Age: {age}", fontsize=13, fontweight="bold", pad=15)
             plt.xlabel("Muscle Group", fontweight="bold")
             plt.ylabel(metric_label, fontweight="bold")
             
@@ -247,12 +259,12 @@ if __name__ == "__main__":
         ("Pax7_Features", "pax7_per_muscle_fibre g", "Pax7 per Muscle Fibre", "pax7_per_muscle_fibre"),
         ("Pax7_Features", "pax7_per_total_nuclei g", "Pax7 per Total Nuclei", "pax7_per_total_nuclei"),
         ("Pax7_Features", "voronoi_cell_area_mean g", "Mean Voronoi Cell Area (um2)", "voronoi_cell_area_mean"),
-        ("Pax7_Features", "voronoi_cell_area_std g", "SD of Voronoi Cell Area (um2)", "voronoi_cell_area_std"),
+        ("Pax7_Features", "voronoi_cell_area_cv g", "Voronoi Cell Area CV", "voronoi_cell_area_cv"),
         
         # --- Muscle Fibres ---
         ("Muscle_Fibres", "muscle_fibre_density g", "Muscle Fibre Density (fibres / um2)", "muscle_fibre_density"),
         ("Muscle_Fibres", "muscle_fibre_area_mean g", "Mean Muscle Fibre Area (um2)", "muscle_fibre_area_mean"),
-        ("Muscle_Fibres", "muscle_fibre_area_std g", "SD of Muscle Fibre Area (um2)", "muscle_fibre_area_std"),
+        ("Muscle_Fibres", "muscle_fibre_area_cv g", "Muscle Fibre Area CV", "muscle_fibre_area_cv"),
 
         # --- Nuclei ---
         ("Nuclei", "nuclei_density g", "Nuclei Density (nuclei / um2)", "nuclei_density"),
