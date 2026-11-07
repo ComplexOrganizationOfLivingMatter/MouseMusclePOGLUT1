@@ -32,18 +32,19 @@ PATH_CELLPOSE_FIBRES = (
 RESULT_DIR = BASE_DIR / "results" / MODEL_FOLDER / "heatmaps_combined_comparison"
 RESULT_DIR.mkdir(parents=True, exist_ok=True)
 
-HEATMAPS_VORONOI_DIR = RESULT_DIR / "heatmaps_voronoi"
-HEATMAPS_CELLPOSE_DIR = RESULT_DIR / "heatmaps_cellpose"
-HEATMAPS_VORONOI_DIR.mkdir(parents=True, exist_ok=True)
-HEATMAPS_CELLPOSE_DIR.mkdir(parents=True, exist_ok=True)
+# Separate Output Directories for Cellpose modes & Voronoi
+HEATMAPS_CELLPOSE_REGION_DIR = RESULT_DIR / "heatmaps_cellpose_region_by_region"
+HEATMAPS_CELLPOSE_WHOLELEG_DIR = RESULT_DIR / "heatmaps_cellpose_whole_leg"
+HEATMAPS_VORONOI_DIR = RESULT_DIR / "heatmaps_voronoi_region_by_region"
+
+for d in [HEATMAPS_CELLPOSE_REGION_DIR, HEATMAPS_CELLPOSE_WHOLELEG_DIR, HEATMAPS_VORONOI_DIR]:
+  d.mkdir(parents=True, exist_ok=True)
 
 # Visualization Settings
 CMAP = "RdBu_r"  # Blue: Small/Dense | Red: Big/Sparse
 V_LIMIT = 0.6  # Color scale limit for log10
 
 # Toggle resolution for separate individual heatmaps:
-# True  -> Saves at original full resolution
-# False -> Resizes/caps at RENDER_MAX_DIM for speed
 SAVE_FULL_RESOLUTION_HEATMAPS = True
 RENDER_MAX_DIM = 2000
 
@@ -92,9 +93,10 @@ def create_thick_outlines(label_img):
 
 
 # =========================================================
-# DYNAMIC WT BASELINE CALCULATION (REGION BY REGION)
+# DYNAMIC WT BASELINE CALCULATIONS
 # =========================================================
 def compute_wt_baselines_per_zone(source_dir: Path, label_type: str):
+  """Computes per-region WT dynamic baselines (zone by zone) for each age."""
   log_step(f"Computing per-region WT dynamic baselines for {label_type}...")
   zone_areas_by_age_zone = {age: {z: [] for z in VALID_ZONES} for age in AGES}
 
@@ -149,16 +151,70 @@ def compute_wt_baselines_per_zone(source_dir: Path, label_type: str):
   return wt_baselines
 
 
+def compute_wt_baselines_whole_leg(source_dir: Path, label_type: str):
+  """Computes whole-leg WT dynamic baselines (global average across all valid muscle regions) for each age."""
+  log_step(f"Computing whole-leg WT dynamic baselines for {label_type}...")
+  whole_leg_areas_by_age = {age: [] for age in AGES}
+
+  for age in AGES:
+    age_src_folder = source_dir / age
+    if not age_src_folder.exists():
+      continue
+
+    wt_files = [
+        f
+        for f in age_src_folder.glob("*.tif")
+        if "KI" not in f.name.upper() and "POGLU" not in f.name.upper()
+    ]
+
+    for tif_path in wt_files:
+      img_name = tif_path.name
+      img_label = io.imread(str(tif_path))
+      if img_label.ndim == 3:
+        img_label = img_label[..., 0]
+
+      h, w = img_label.shape
+      mask_path = PATH_MASKS / age / img_name
+      if not mask_path.exists():
+        continue
+
+      mask_zones = io.imread(str(mask_path))
+      if mask_zones.ndim == 3:
+        mask_zones = mask_zones[..., 0]
+      if mask_zones.shape != (h, w):
+        mask_zones = cv2.resize(mask_zones, (w, h), interpolation=cv2.INTER_NEAREST)
+
+      props = measure.regionprops(img_label.astype(np.int32))
+      for p in props:
+        if p.label == 0:
+          continue
+        cy, cx = map(int, p.centroid)
+        if 0 <= cy < h and 0 <= cx < w:
+          z_id = mask_zones[cy, cx]
+          if z_id in VALID_ZONES:
+            cell_area_um2 = p.area * PIXEL_AREA_UM2
+            whole_leg_areas_by_age[age].append(cell_area_um2)
+
+  wt_whole_leg_baselines = {}
+  for age in AGES:
+    areas = whole_leg_areas_by_age[age]
+    wt_whole_leg_baselines[age] = np.mean(areas) if len(areas) > 0 else np.nan
+
+  log_step(f"Whole-leg WT baselines computed successfully for {label_type}.")
+  return wt_whole_leg_baselines
+
+
 # =========================================================
-# SEQUENTIAL PROCESSING WITH EXECUTION TRACKING & ZONE CONTOURS
+# SEQUENTIAL PROCESSING WITH BOUNDARY CONTOURS & DIRECTORIES
 # =========================================================
 def process_heatmap_set_sequential(
     source_dir: Path,
-    output_dir: Path,
+    output_base_dir: Path,
     wt_baselines_dict: dict,
     label_type: str,
+    mode: str,
 ):
-  log_step(f"Starting sequential processing for: {label_type} from {source_dir}")
+  log_step(f"Starting sequential processing for: {label_type} (Mode: {mode}) from {source_dir}")
 
   if not source_dir.exists():
     log_step(f"Source directory does not exist: {source_dir}", level="ERROR")
@@ -171,17 +227,16 @@ def process_heatmap_set_sequential(
     if not age_src_folder.exists():
       continue
 
-    zone_baselines = wt_baselines_dict.get(age, {})
-    age_out_dir = output_dir / age
+    age_baselines = wt_baselines_dict.get(age, {})
+    age_out_dir = output_base_dir / age
     age_out_dir.mkdir(parents=True, exist_ok=True)
 
     tif_files = list(age_src_folder.glob("*.tif"))
-    log_step(f"[{label_type}] Processing age {age}: {len(tif_files)} files found.")
+    log_step(f"[{label_type} - {mode}] Processing age {age}: {len(tif_files)} files found.")
 
     for idx, tif_path in enumerate(tif_files, start=1):
       img_name = tif_path.name
       is_ki = "KI" in img_name.upper()
-      log_step(f"({idx}/{len(tif_files)}) Processing {img_name}...")
 
       try:
         img_label = io.imread(str(tif_path))
@@ -192,7 +247,6 @@ def process_heatmap_set_sequential(
         h, w = img_label.shape
         mask_path = PATH_MASKS / age / img_name
         if not mask_path.exists():
-          log_step(f"  -> Skipping: Mask not found at {mask_path}", level="WARN")
           continue
 
         mask_zones = io.imread(str(mask_path))
@@ -207,10 +261,10 @@ def process_heatmap_set_sequential(
 
         props = measure.regionprops(img_label_masked)
         if len(props) == 0:
-          log_step(f"  -> Skipping: No regions detected.", level="WARN")
           continue
 
         lookup = np.zeros(img_label.max() + 1, dtype=np.float32)
+
         for p in props:
           if p.label == 0:
             continue
@@ -218,10 +272,15 @@ def process_heatmap_set_sequential(
           if 0 <= cy < h and 0 <= cx < w:
             z_id = mask_zones[cy, cx]
             if z_id in VALID_ZONES:
-              wt_zone_mean_um2 = zone_baselines.get(z_id, np.nan)
-              if not np.isnan(wt_zone_mean_um2) and wt_zone_mean_um2 > 0:
-                cell_area_um2 = p.area * PIXEL_AREA_UM2
-                ratio = np.log10(cell_area_um2 / wt_zone_mean_um2)
+              cell_area_um2 = p.area * PIXEL_AREA_UM2
+
+              if mode == "region_by_region":
+                wt_mean_um2 = age_baselines.get(z_id, np.nan)
+              else:  # whole_leg
+                wt_mean_um2 = age_baselines
+
+              if not np.isnan(wt_mean_um2) and wt_mean_um2 > 0:
+                ratio = np.log10(cell_area_um2 / wt_mean_um2)
                 lookup[p.label] = np.clip(ratio, -V_LIMIT, V_LIMIT)
 
         if SAVE_FULL_RESOLUTION_HEATMAPS:
@@ -244,19 +303,19 @@ def process_heatmap_set_sequential(
         ax.set_facecolor("black")
 
         clean_name = clean_muscle_name(tif_path.stem, is_ki)
-        ax.set_title(f"{clean_name} ({label_type})", color="white", fontsize=12 if SAVE_FULL_RESOLUTION_HEATMAPS else 14)
+        ax.set_title(f"{clean_name} ({label_type} - {mode})", color="white", fontsize=12 if SAVE_FULL_RESOLUTION_HEATMAPS else 14)
 
         ax.imshow(heatmap, cmap=CMAP, vmin=-V_LIMIT, vmax=V_LIMIT)
         ax.imshow(edge_overlay, cmap="binary_r", interpolation="nearest", alpha=0.9)
 
-        # 1. Draw outer muscle boundaries (White)
+        # 1. Outer boundaries (White)
         mask_bin = (np.isin(mask_render, VALID_ZONES)).astype(np.uint8)
         contours, _ = cv2.findContours(mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for cnt in contours:
           poly = cnt.reshape(-1, 2)
           ax.plot(poly[:, 0], poly[:, 1], color="white", lw=0.8 if SAVE_FULL_RESOLUTION_HEATMAPS else 1.0, alpha=0.6)
 
-        # 2. Draw inner muscle group / zone boundaries to distinguish adjacent regions (Black contours)
+        # 2. Inner muscle group / zone boundaries (Black)
         for z in VALID_ZONES:
           zone_bin = (mask_render == z).astype(np.uint8)
           if np.any(zone_bin):
@@ -283,13 +342,13 @@ def process_heatmap_set_sequential(
       except Exception as e:
         log_step(f"Error processing {img_name}: {str(e)}", level="ERROR")
 
-  log_step(f"Completed {label_type} processing. Total heatmaps generated: {total_processed}")
+  log_step(f"Completed {label_type} ({mode}) processing. Total heatmaps generated: {total_processed}")
 
 
 # =========================================================
-# MONTAGE GENERATION (WITH EXPLICIT MEMORY CLEANUP)
+# MONTAGE GENERATION
 # =========================================================
-def create_comparison_montage(age, heatmap_subfolder: Path, title_suffix: str):
+def create_comparison_montage(age, heatmap_subfolder: Path, title_suffix: str, mode: str):
   age_folder = heatmap_subfolder / age
   if not age_folder.exists():
     return
@@ -305,7 +364,7 @@ def create_comparison_montage(age, heatmap_subfolder: Path, title_suffix: str):
   fig, axes = plt.subplots(2, n_cols, figsize=(n_cols * 5, 11), facecolor="black")
   fig.patch.set_facecolor("black")
   fig.suptitle(
-      f"{age.upper()} {title_suffix} Comparison",
+      f"{age.upper()} {title_suffix} Comparison ({mode})",
       color="white",
       fontsize=20,
       fontweight="bold",
@@ -335,11 +394,11 @@ def create_comparison_montage(age, heatmap_subfolder: Path, title_suffix: str):
 
   cax = fig.add_axes([0.3, 0.07, 0.4, 0.02])
   cbar = fig.colorbar(sm, cax=cax, orientation="horizontal")
-  cbar.set_label(r"$\log_{10}(\frac{Cell\_Area_{\mu m^2}}{WT\_Region\_Mean_{\mu m^2}})$", color="white", size=16, labelpad=10)
+  cbar.set_label(r"$\log_{10}(\frac{Cell\_Area}{WT\_Mean\_Area})$", color="white", size=16, labelpad=10)
   cbar.ax.xaxis.set_tick_params(color="white", labelcolor="white")
   cbar.outline.set_edgecolor("white")
 
-  output_filename = f"Montage_{age}_{title_suffix}_Comparison.png"
+  output_filename = f"Montage_{age}_{title_suffix}_{mode}_Comparison.png"
   output_path = RESULT_DIR / output_filename
   plt.savefig(
       output_path,
@@ -349,8 +408,6 @@ def create_comparison_montage(age, heatmap_subfolder: Path, title_suffix: str):
       transparent=False,
       dpi=150,
   )
-  
-  # Explicitly clear memory and figures to prevent cumulative leaks
   plt.close(fig)
   plt.close('all')
   gc.collect()
@@ -361,35 +418,59 @@ def create_comparison_montage(age, heatmap_subfolder: Path, title_suffix: str):
 # EXECUTION (CELLPOSE FIRST, THEN VORONOI)
 # =========================================================
 if __name__ == "__main__":
-  log_step("=== WORKFLOW INITIALIZED (SEQUENTIAL & MEMORY-SAFE MODE) ===")
+  log_step("=== WORKFLOW INITIALIZED (CELLPOSE DUAL-MODE & VORONOI REGION-WISE) ===")
 
-  # 1. Compute Cellpose WT Baselines & Process Heatmaps
-  log_step("--- PROCESSING CELLPOSE ---")
-  wt_cellpose_baselines = compute_wt_baselines_per_zone(PATH_CELLPOSE_FIBRES, "Cellpose")
+  # ---------------------------------------------------------
+  # 1. PROCESS CELLPOSE (Region-by-Region)
+  # ---------------------------------------------------------
+  log_step("--- PROCESSING CELLPOSE (Region-by-Region) ---")
+  wt_cp_region = compute_wt_baselines_per_zone(PATH_CELLPOSE_FIBRES, "Cellpose")
   process_heatmap_set_sequential(
       source_dir=PATH_CELLPOSE_FIBRES,
-      output_dir=HEATMAPS_CELLPOSE_DIR,
-      wt_baselines_dict=wt_cellpose_baselines,
+      output_base_dir=HEATMAPS_CELLPOSE_REGION_DIR,
+      wt_baselines_dict=wt_cp_region,
       label_type="Cellpose",
+      mode="region_by_region",
   )
 
-  # 2. Compute Voronoi WT Baselines & Process Heatmaps
-  log_step("--- PROCESSING VORONOI ---")
-  wt_voronoi_baselines = compute_wt_baselines_per_zone(PATH_VORONOI, "Voronoi")
+  # ---------------------------------------------------------
+  # 2. PROCESS CELLPOSE (Whole-Leg)
+  # ---------------------------------------------------------
+  log_step("--- PROCESSING CELLPOSE (Whole-Leg) ---")
+  wt_cp_whole = compute_wt_baselines_whole_leg(PATH_CELLPOSE_FIBRES, "Cellpose")
+  process_heatmap_set_sequential(
+      source_dir=PATH_CELLPOSE_FIBRES,
+      output_base_dir=HEATMAPS_CELLPOSE_WHOLELEG_DIR,
+      wt_baselines_dict=wt_cp_whole,
+      label_type="Cellpose",
+      mode="whole_leg",
+  )
+
+  # ---------------------------------------------------------
+  # 3. PROCESS VORONOI (Region-by-Region ONLY)
+  # ---------------------------------------------------------
+  log_step("--- PROCESSING VORONOI (Region-by-Region) ---")
+  wt_vor_region = compute_wt_baselines_per_zone(PATH_VORONOI, "Voronoi")
   process_heatmap_set_sequential(
       source_dir=PATH_VORONOI,
-      output_dir=HEATMAPS_VORONOI_DIR,
-      wt_baselines_dict=wt_voronoi_baselines,
+      output_base_dir=HEATMAPS_VORONOI_DIR,
+      wt_baselines_dict=wt_vor_region,
       label_type="Voronoi",
+      mode="region_by_region",
   )
 
-  # 3. Generate Montages for both sets across all ages with complete memory flushing
+  # ---------------------------------------------------------
+  # 4. MONTAGE COMPILATION PHASE
+  # ---------------------------------------------------------
   log_step("Starting Montage Compilation Phase...")
-
   for age in AGES:
-    log_step(f"Compiling Cellpose montages for age {age}...")
-    create_comparison_montage(age, HEATMAPS_CELLPOSE_DIR, "Cellpose")
-    log_step(f"Compiling Voronoi montages for age {age}...")
-    create_comparison_montage(age, HEATMAPS_VORONOI_DIR, "Voronoi")
+    log_step(f"Compiling Cellpose region-wise montages for age {age}...")
+    create_comparison_montage(age, HEATMAPS_CELLPOSE_REGION_DIR, "Cellpose", mode="region_by_region")
+
+    log_step(f"Compiling Cellpose whole-leg montages for age {age}...")
+    create_comparison_montage(age, HEATMAPS_CELLPOSE_WHOLELEG_DIR, "Cellpose", mode="whole_leg")
+
+    log_step(f"Compiling Voronoi region-wise montages for age {age}...")
+    create_comparison_montage(age, HEATMAPS_VORONOI_DIR, "Voronoi", mode="region_by_region")
 
   log_step("=== WORKFLOW FINISHED SUCCESSFULLY ===")
